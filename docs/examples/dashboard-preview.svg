@@ -1,0 +1,164 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 620" width="100%" height="620" role="img" aria-label="Atlas Multi-Agent AI Data Analyst Dashboard Preview">
+  <defs>
+    <linearGradient id="heroGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#065f46"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ecfdf5"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer Browser Frame -->
+  <rect x="0" y="0" width="1120" height="620" rx="16" fill="#f1f5f3" stroke="#d1ddd7" stroke-width="2"/>
+  <rect x="0" y="0" width="1120" height="38" rx="16" fill="#0f172a"/>
+  <rect x="0" y="22" width="1120" height="16" fill="#0f172a"/>
+  <circle cx="22" cy="19" r="6" fill="#ef4444"/>
+  <circle cx="42" cy="19" r="6" fill="#f59e0b"/>
+  <circle cx="62" cy="19" r="6" fill="#10b981"/>
+  <text x="560" y="24" font-family="Inter, Segoe UI, sans-serif" font-size="12" font-weight="600" fill="#94a3b8" text-anchor="middle">
+    atlas. — Hierarchical Multi-Agent AI Data Analyst (LangGraph · Jev · OpenAI · Isolated Python Sandbox)
+  </text>
+
+  <!-- Left Sidebar -->
+  <rect x="2" y="38" width="230" height="580" fill="#f8faf9"/>
+  <line x1="232" y1="38" x2="232" y2="618" stroke="#e5ebe8" stroke-width="1.5"/>
+
+  <rect x="18" y="56" width="34" height="34" rx="9" fill="#059669"/>
+  <text x="35" y="78" font-family="Inter, sans-serif" font-size="16" font-weight="800" fill="#ffffff" text-anchor="middle">A</text>
+  <text x="62" y="72" font-family="Inter, sans-serif" font-size="19" font-weight="800" fill="#0f172a">atlas.</text>
+  <text x="62" y="86" font-family="Inter, sans-serif" font-size="9" font-weight="700" fill="#64748b">BUSINESS ANALYTICS</text>
+
+  <rect x="16" y="106" width="200" height="36" rx="9" fill="#059669"/>
+  <text x="32" y="128" font-family="Inter, sans-serif" font-size="12" font-weight="700" fill="#ffffff">+ New Analysis</text>
+  <text x="196" y="128" font-family="Inter, sans-serif" font-size="10" font-weight="600" fill="#d1fae5" text-anchor="end">⌘K</text>
+
+  <text x="20" y="166" font-family="Inter, sans-serif" font-size="9.5" font-weight="700" fill="#94a3b8">INSTANT DEMO SHOWCASES</text>
+  <rect x="16" y="176" width="200" height="34" rx="8" fill="#ecfdf5" stroke="#a7f3d0"/>
+  <text x="28" y="197" font-family="Inter, sans-serif" font-size="11.5" font-weight="700" fill="#065f46">▶ Multi-Agent Root-Cause DAG</text>
+
+  <rect x="16" y="216" width="200" height="34" rx="8" fill="#ffffff" stroke="#e5ebe8"/>
+  <text x="28" y="237" font-family="Inter, sans-serif" font-size="11.5" font-weight="600" fill="#334155">▶ RFM KMeans Python Sandbox</text>
+
+  <text x="20" y="276" font-family="Inter, sans-serif" font-size="9.5" font-weight="700" fill="#94a3b8">SECURITY &amp; GUARDRAILS</text>
+  <rect x="16" y="286" width="200" height="104" rx="10" fill="#ffffff" stroke="#e5ebe8"/>
+  <text x="28" y="308" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#065f46">✓ SQLGlot Read-Only AST</text>
+  <text x="28" y="328" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#065f46">✓ Subprocess sys.addaudithook</text>
+  <text x="28" y="348" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#065f46">✓ SHA-256 Sandbox Reproduction</text>
+  <text x="28" y="368" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#065f46">✓ Narrative Number Grounding</text>
+
+  <rect x="16" y="558" width="200" height="46" rx="10" fill="#ffffff" stroke="#e5ebe8"/>
+  <circle cx="32" cy="581" r="5" fill="#10b981"/>
+  <text x="44" y="577" font-family="Inter, sans-serif" font-size="11.5" font-weight="700" fill="#0f172a">MySQL ClassicModels</text>
+  <text x="44" y="592" font-family="Inter, sans-serif" font-size="10" fill="#64748b">Connected · 8 Approved Tables</text>
+
+  <!-- Main Content Area -->
+  <rect x="233" y="38" width="885" height="580" fill="#ffffff"/>
+
+  <!-- Report Hero Card -->
+  <rect x="256" y="56" width="840" height="96" rx="14" fill="url(#heroGrad)"/>
+  <rect x="274" y="70" width="136" height="20" rx="10" fill="rgba(255,255,255,0.18)"/>
+  <text x="342" y="84" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="middle">★ Verified Complete</text>
+  <rect x="418" y="70" width="184" height="20" rx="10" fill="rgba(255,255,255,0.18)"/>
+  <text x="510" y="84" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="middle">Nov 2004 vs. Oct 2004</text>
+
+  <rect x="974" y="70" width="104" height="26" rx="7" fill="#ffffff"/>
+  <text x="1026" y="87" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#065f46" text-anchor="middle">⬇ Download PDF</text>
+
+  <text x="274" y="116" font-family="Inter, sans-serif" font-size="19" font-weight="800" fill="#ffffff">
+    ClassicModels Gross Merchandise Revenue Root-Cause Analysis (Nov 2004 vs. Oct 2004)
+  </text>
+  <text x="274" y="136" font-family="Inter, sans-serif" font-size="11.5" fill="#d1fae5">
+    Route: ROOT_CAUSE_INVESTIGATION (0.97) · 6-Task LangGraph DAG · Reconciled ($0.00 Residual) · 100% SHA-256 Sandbox Reproduced
+  </text>
+
+  <!-- KPI Row -->
+  <rect x="256" y="164" width="201" height="66" rx="10" fill="#f8faf9" stroke="#e5ebe8"/>
+  <text x="270" y="184" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#64748b">November 2004 Revenue</text>
+  <text x="270" y="214" font-family="Inter, sans-serif" font-size="20" font-weight="800" fill="#0f172a">$951,976.17</text>
+
+  <rect x="469" y="164" width="201" height="66" rx="10" fill="#f8faf9" stroke="#e5ebe8"/>
+  <text x="483" y="184" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#64748b">October 2004 Revenue</text>
+  <text x="483" y="214" font-family="Inter, sans-serif" font-size="20" font-weight="800" fill="#0f172a">$553,257.50</text>
+
+  <rect x="682" y="164" width="201" height="66" rx="10" fill="#f8faf9" stroke="#e5ebe8"/>
+  <text x="696" y="184" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#64748b">Net Revenue Variance</text>
+  <text x="696" y="214" font-family="Inter, sans-serif" font-size="20" font-weight="800" fill="#047857">+$398,718.67</text>
+
+  <rect x="895" y="164" width="201" height="66" rx="10" fill="#f8faf9" stroke="#e5ebe8"/>
+  <text x="909" y="184" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#64748b">MoM Growth &amp; Orders</text>
+  <text x="909" y="214" font-family="Inter, sans-serif" font-size="20" font-weight="800" fill="#047857">+72.07% (33 ord)</text>
+
+  <!-- Navigation Tabs -->
+  <line x1="256" y1="266" x2="1096" y2="266" stroke="#e5ebe8" stroke-width="1.5"/>
+  <text x="266" y="256" font-family="Inter, sans-serif" font-size="12.5" font-weight="700" fill="#047857">📊 Insights, Charts &amp; Briefing</text>
+  <line x1="256" y1="266" x2="455" y2="266" stroke="#059669" stroke-width="3"/>
+  <text x="485" y="256" font-family="Inter, sans-serif" font-size="12.5" font-weight="600" fill="#64748b">📋 Data Tables (2)</text>
+  <text x="625" y="256" font-family="Inter, sans-serif" font-size="12.5" font-weight="700" fill="#065f46">🛡 Methodology, Code &amp; Audit Trace (11)</text>
+
+  <!-- Left Panel: Product Line Variance Bar Chart -->
+  <rect x="256" y="280" width="412" height="320" rx="12" fill="#ffffff" stroke="#e5ebe8"/>
+  <text x="274" y="304" font-family="Inter, sans-serif" font-size="13.5" font-weight="700" fill="#0f172a">Product Line Revenue Variance (Nov vs. Oct)</text>
+  <text x="274" y="320" font-family="Inter, sans-serif" font-size="11" fill="#64748b">Primary contributor: Classic Cars (+$156,743.11) · Ships (-$15,519.55)</text>
+
+  <line x1="395" y1="336" x2="395" y2="574" stroke="#94a3b8" stroke-width="1.2"/>
+
+  <text x="387" y="356" font-family="Inter, sans-serif" font-size="11" fill="#334155" text-anchor="end">Classic Cars</text>
+  <rect x="395" y="343" width="190" height="18" rx="4" fill="#059669"/>
+  <text x="591" y="356" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#059669">+$156,743</text>
+
+  <text x="387" y="390" font-family="Inter, sans-serif" font-size="11" fill="#334155" text-anchor="end">Vintage Cars</text>
+  <rect x="395" y="377" width="128" height="18" rx="4" fill="#059669"/>
+  <text x="529" y="390" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#059669">+$104,493</text>
+
+  <text x="387" y="424" font-family="Inter, sans-serif" font-size="11" fill="#334155" text-anchor="end">Motorcycles</text>
+  <rect x="395" y="411" width="84" height="18" rx="4" fill="#059669"/>
+  <text x="485" y="424" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#059669">+$68,914</text>
+
+  <text x="387" y="458" font-family="Inter, sans-serif" font-size="11" fill="#334155" text-anchor="end">Planes</text>
+  <rect x="395" y="445" width="58" height="18" rx="4" fill="#059669"/>
+  <text x="459" y="458" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#059669">+$46,812</text>
+
+  <text x="387" y="492" font-family="Inter, sans-serif" font-size="11" fill="#334155" text-anchor="end">Trucks &amp; Buses</text>
+  <rect x="395" y="479" width="39" height="18" rx="4" fill="#059669"/>
+  <text x="440" y="492" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#059669">+$31,459</text>
+
+  <text x="387" y="526" font-family="Inter, sans-serif" font-size="11" fill="#334155" text-anchor="end">Trains</text>
+  <rect x="395" y="513" width="10" height="18" rx="4" fill="#059669"/>
+  <text x="411" y="526" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#059669">+$5,816</text>
+
+  <text x="387" y="560" font-family="Inter, sans-serif" font-size="11" fill="#334155" text-anchor="end">Ships</text>
+  <rect x="373" y="547" width="22" height="18" rx="4" fill="#dc2626"/>
+  <text x="402" y="560" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#dc2626">-$15,520</text>
+
+  <!-- Right Panel: 3-Layer Provenance & Autonomous Sandbox Code Preview -->
+  <rect x="684" y="280" width="412" height="320" rx="12" fill="url(#cardGrad)" stroke="#a7f3d0"/>
+  <rect x="700" y="296" width="178" height="20" rx="6" fill="#d1fae5"/>
+  <text x="789" y="310" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#065f46" text-anchor="middle">✓ SHA-256 Sandbox Reproduced</text>
+  <rect x="886" y="296" width="194" height="20" rx="6" fill="#e0f2fe"/>
+  <text x="983" y="310" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#0369a1" text-anchor="middle">SQLGlot AST Read-Only Verified</text>
+
+  <text x="700" y="338" font-family="Inter, sans-serif" font-size="13" font-weight="700" fill="#0f172a">
+    Autonomous Python Sandbox &amp; 3-Layer Audit Provenance
+  </text>
+  <text x="700" y="355" font-family="Inter, sans-serif" font-size="11" fill="#334155">
+    Method: LMDI Logarithmic Price-Volume Decomposition (0.00 Residual)
+  </text>
+
+  <rect x="700" y="366" width="380" height="134" rx="8" fill="#0f172a"/>
+  <text x="714" y="386" font-family="Consolas, monospace" font-size="10.5" fill="#34d399"># IsolatedProcessSandboxProvider (sys.addaudithook)</text>
+  <text x="714" y="403" font-family="Consolas, monospace" font-size="10.5" fill="#e2e8f0">base_df = load_dataset("baseline")</text>
+  <text x="714" y="420" font-family="Consolas, monospace" font-size="10.5" fill="#e2e8f0">L_w = (curr_rev - prev_rev) / math.log(curr_rev / prev_rev)</text>
+  <text x="714" y="437" font-family="Consolas, monospace" font-size="10.5" fill="#e2e8f0">vol_effect = round(L_w * math.log(curr_ord / prev_ord), 2)</text>
+  <text x="714" y="454" font-family="Consolas, monospace" font-size="10.5" fill="#e2e8f0">aov_effect = round(net_change - vol_effect, 2)</text>
+  <text x="714" y="471" font-family="Consolas, monospace" font-size="10.5" fill="#38bdf8">save_result({"net_variance_usd": 398718.67, "reconciled": True})</text>
+  <text x="714" y="488" font-family="Consolas, monospace" font-size="10.5" fill="#a7f3d0"># Reproduced by EvidenceReviewerAgent (tolerance &lt;= 1e-4)</text>
+
+  <!-- Multi-Model Telemetry Footer inside Right Panel -->
+  <rect x="700" y="510" width="380" height="76" rx="8" fill="#ffffff" stroke="#e5ebe8"/>
+  <text x="712" y="528" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#065f46">MULTI-MODEL WORKLOAD ROUTING TELEMETRY</text>
+  <text x="712" y="546" font-family="Inter, sans-serif" font-size="10.5" fill="#334155">• Router: typesafe/jev-1.14 (195ms) · SQL: gpt-6-luna (620ms)</text>
+  <text x="712" y="562" font-family="Inter, sans-serif" font-size="10.5" fill="#334155">• Planner / Python / Review: gpt-6.1-sol · Report: gpt-6.1-terra</text>
+  <text x="712" y="578" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#0f172a">Total Run: 16,702 tokens · $0.0282 USD · 0 Unverified Numbers</text>
+</svg>

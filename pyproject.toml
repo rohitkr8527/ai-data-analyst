@@ -1,0 +1,16 @@
+[project]
+name = "multi-agent-data-analyst"
+version = "2.0.0"
+description = "Hierarchical Autonomous Multi-Agent AI Data Analyst powered by LangGraph, OpenRouter Jev, OpenAI Responses API, SQLGlot Read-Only Gateway, and Isolated Python Sandbox"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = ["backend", "."]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
