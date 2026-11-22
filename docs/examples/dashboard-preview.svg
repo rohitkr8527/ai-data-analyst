@@ -18,7 +18,7 @@
   <circle cx="42" cy="19" r="6" fill="#f59e0b"/>
   <circle cx="62" cy="19" r="6" fill="#10b981"/>
   <text x="560" y="24" font-family="Inter, Segoe UI, sans-serif" font-size="12" font-weight="600" fill="#94a3b8" text-anchor="middle">
-    atlas. — Hierarchical Multi-Agent AI Data Analyst (LangGraph · Jev · OpenAI · Isolated Python Sandbox)
+    atlas. — Hierarchical Multi-Agent AI Data Analyst (LangGraph · Jev 1.14 · OpenAI · Isolated Python Sandbox)
   </text>
 
   <!-- Left Sidebar -->
@@ -30,23 +30,31 @@
   <text x="62" y="72" font-family="Inter, sans-serif" font-size="19" font-weight="800" fill="#0f172a">atlas.</text>
   <text x="62" y="86" font-family="Inter, sans-serif" font-size="9" font-weight="700" fill="#64748b">BUSINESS ANALYTICS</text>
 
-  <rect x="16" y="106" width="200" height="36" rx="9" fill="#059669"/>
-  <text x="32" y="128" font-family="Inter, sans-serif" font-size="12" font-weight="700" fill="#ffffff">+ New Analysis</text>
-  <text x="196" y="128" font-family="Inter, sans-serif" font-size="10" font-weight="600" fill="#d1fae5" text-anchor="end">⌘K</text>
+  <rect x="16" y="106" width="200" height="34" rx="9" fill="#059669"/>
+  <text x="30" y="127" font-family="Inter, sans-serif" font-size="12" font-weight="700" fill="#ffffff">+ New Analysis</text>
+  <text x="198" y="127" font-family="Inter, sans-serif" font-size="10" font-weight="600" fill="#d1fae5" text-anchor="end">Ctrl+K</text>
 
-  <text x="20" y="166" font-family="Inter, sans-serif" font-size="9.5" font-weight="700" fill="#94a3b8">INSTANT DEMO SHOWCASES</text>
-  <rect x="16" y="176" width="200" height="34" rx="8" fill="#ecfdf5" stroke="#a7f3d0"/>
-  <text x="28" y="197" font-family="Inter, sans-serif" font-size="11.5" font-weight="700" fill="#065f46">▶ Multi-Agent Root-Cause DAG</text>
+  <text x="20" y="162" font-family="Inter, sans-serif" font-size="9.5" font-weight="700" fill="#94a3b8">INSTANT DEMO SHOWCASES</text>
+  <rect x="16" y="170" width="200" height="32" rx="8" fill="#ecfdf5" stroke="#a7f3d0"/>
+  <text x="26" y="190" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#065f46">▶ Multi-Agent Root-Cause DAG</text>
 
-  <rect x="16" y="216" width="200" height="34" rx="8" fill="#ffffff" stroke="#e5ebe8"/>
-  <text x="28" y="237" font-family="Inter, sans-serif" font-size="11.5" font-weight="600" fill="#334155">▶ RFM KMeans Python Sandbox</text>
+  <rect x="16" y="208" width="200" height="32" rx="8" fill="#ffffff" stroke="#e5ebe8"/>
+  <text x="26" y="228" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#334155">▶ RFM KMeans Python Sandbox</text>
 
-  <text x="20" y="276" font-family="Inter, sans-serif" font-size="9.5" font-weight="700" fill="#94a3b8">SECURITY &amp; GUARDRAILS</text>
-  <rect x="16" y="286" width="200" height="104" rx="10" fill="#ffffff" stroke="#e5ebe8"/>
-  <text x="28" y="308" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#065f46">✓ SQLGlot Read-Only AST</text>
-  <text x="28" y="328" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#065f46">✓ Subprocess sys.addaudithook</text>
-  <text x="28" y="348" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#065f46">✓ SHA-256 Sandbox Reproduction</text>
-  <text x="28" y="368" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#065f46">✓ Narrative Number Grounding</text>
+  <rect x="16" y="246" width="200" height="32" rx="8" fill="#ffffff" stroke="#e5ebe8"/>
+  <text x="26" y="266" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#334155">▶ SQL CTE Cohort Retention</text>
+
+  <text x="20" y="302" font-family="Inter, sans-serif" font-size="9.5" font-weight="700" fill="#94a3b8">RECENT SESSIONS</text>
+  <rect x="16" y="310" width="200" height="44" rx="8" fill="#ecfdf5" stroke="#a7f3d0"/>
+  <text x="26" y="328" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#065f46">Why did revenue increase in Nov...</text>
+  <text x="26" y="344" font-family="Inter, sans-serif" font-size="9.5" fill="#64748b">demo-rca · ROOT_CAUSE_ANALYSIS</text>
+
+  <text x="20" y="378" font-family="Inter, sans-serif" font-size="9.5" font-weight="700" fill="#94a3b8">SECURITY &amp; GUARDRAILS</text>
+  <rect x="16" y="386" width="200" height="100" rx="10" fill="#ffffff" stroke="#e5ebe8"/>
+  <text x="26" y="407" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#065f46">✓ SQLGlot Read-Only AST</text>
+  <text x="26" y="426" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#065f46">✓ Subprocess sys.addaudithook</text>
+  <text x="26" y="445" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#065f46">✓ SHA-256 Sandbox Reproduction</text>
+  <text x="26" y="464" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#065f46">✓ Narrative Number Grounding</text>
 
   <rect x="16" y="558" width="200" height="46" rx="10" fill="#ffffff" stroke="#e5ebe8"/>
   <circle cx="32" cy="581" r="5" fill="#10b981"/>
@@ -58,19 +66,21 @@
 
   <!-- Report Hero Card -->
   <rect x="256" y="56" width="840" height="96" rx="14" fill="url(#heroGrad)"/>
-  <rect x="274" y="70" width="136" height="20" rx="10" fill="rgba(255,255,255,0.18)"/>
-  <text x="342" y="84" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="middle">★ Verified Complete</text>
-  <rect x="418" y="70" width="184" height="20" rx="10" fill="rgba(255,255,255,0.18)"/>
-  <text x="510" y="84" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="middle">Nov 2004 vs. Oct 2004</text>
+  <rect x="274" y="70" width="96" height="20" rx="10" fill="rgba(255,255,255,0.18)"/>
+  <text x="322" y="84" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="middle">Completed</text>
+  <rect x="378" y="70" width="150" height="20" rx="10" fill="rgba(255,255,255,0.18)"/>
+  <text x="453" y="84" font-family="Inter, sans-serif" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="middle">Nov 2004 vs. Oct 2004</text>
 
-  <rect x="974" y="70" width="104" height="26" rx="7" fill="#ffffff"/>
-  <text x="1026" y="87" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#065f46" text-anchor="middle">⬇ Download PDF</text>
+  <rect x="876" y="68" width="96" height="26" rx="7" fill="rgba(255,255,255,0.16)" stroke="rgba(255,255,255,0.35)"/>
+  <text x="924" y="85" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#ffffff" text-anchor="middle">HTML Report</text>
+  <rect x="980" y="68" width="98" height="26" rx="7" fill="#ffffff"/>
+  <text x="1029" y="85" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#065f46" text-anchor="middle">PDF Report</text>
 
-  <text x="274" y="116" font-family="Inter, sans-serif" font-size="19" font-weight="800" fill="#ffffff">
+  <text x="274" y="116" font-family="Inter, sans-serif" font-size="18.5" font-weight="800" fill="#ffffff">
     ClassicModels Gross Merchandise Revenue Root-Cause Analysis (Nov 2004 vs. Oct 2004)
   </text>
   <text x="274" y="136" font-family="Inter, sans-serif" font-size="11.5" fill="#d1fae5">
-    Route: ROOT_CAUSE_INVESTIGATION (0.97) · 6-Task LangGraph DAG · Reconciled ($0.00 Residual) · 100% SHA-256 Sandbox Reproduced
+    Route: ROOT_CAUSE_INVESTIGATION (97%) · 6-Task LangGraph DAG · Reconciled ($0.00 Residual) · 100% SHA-256 Sandbox Reproduced
   </text>
 
   <!-- KPI Row -->
