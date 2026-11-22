@@ -1,4 +1,4 @@
-"""Intelligent Planning Agent (gpt-6.1-sol)."""
+"""Intelligent Planning Agent."""
 from __future__ import annotations
 import logging
 from typing import Any
@@ -15,28 +15,19 @@ logger = logging.getLogger(__name__)
 
 AVAILABLE_DEEP_TASKS: dict[str, str] = {
     "baseline": "Establish total baseline revenue, completed order volume, and AOV across comparison periods",
-    "product_line_bridge": "Analyze revenue changes across product lines (e.g. Classic Cars, Vintage Cars, Motorcycles)",
-    "country_bridge": "Analyze revenue changes across customer countries (e.g. USA, France, Australia, UK)",
+    "product_line_bridge": "Analyze revenue changes across product lines",
+    "country_bridge": "Analyze revenue changes across customer countries",
     "product_bridge": "Identify top individual products driving the revenue variance",
     "customer_bridge": "Identify top individual customer accounts driving the variance",
-    "order_status": "Inspect order fulfillment status breakdown (Shipped, In Process, Cancelled, Disputed)",
-    "trend": "Show multi-month historical trend to assess seasonality versus abrupt decline",
+    "order_status": "Inspect order fulfillment status breakdown",
+    "trend": "Show multi-month historical trend",
 }
 
-PLANNER_SYSTEM_PROMPT = """You are the Lead Analytical Strategist (Planner Agent) for an autonomous multi-agent data analyst on ClassicModels.
+PLANNER_SYSTEM_PROMPT = """You are the Lead Analytical Strategist (Planner Agent) for ClassicModels.
 Translate the user's question into a lean, evidence-first Task DAG (`PlanDraft`).
-
-### Delegation & Token-Efficiency Rules:
-1. **SQL Tasks (`agent="sql"`)**:
-   - Prefer `QuerySpec(mode="structured", ...)` for all standard metrics (`gross_revenue`, `total_orders`, `aov`, `units_sold`, `payments_received`) and dimensions (`product_line`, `country`, `product`, `customer`, `order_status`, `month`, `quarter`, `year`, `sales_rep`, `office`).
-   - Reserve `QuerySpec(mode="autonomous", ...)` ONLY for custom multi-table behavioral/cohort queries (e.g., customer-level RFM features) that cannot be expressed as a structured metric + dimension query.
-2. **Python Tasks (`agent="python"`)**:
-   - Prefer deterministic utility tools (`revenue_decomposition`, `contribution_analysis`, `period_comparison`, `statistical_summary`, `trend_analysis`, `forecast_linear`) for standard variance, contribution, and performance reports.
-   - Reserve `PythonToolSpec(tool="autonomous_research", mode="autonomous", ...)` ONLY for open-ended statistical or machine-learning tasks (e.g., RFM KMeans clustering, regression, hypothesis testing, Gini/Pareto concentration).
-3. **Lean DAG Design**:
-   - Simple lookups: 1 structured SQL task (`complexity="lookup"`, `hypotheses_required=false`).
-   - Comparisons & Executive Reports: 2 to 4 structured SQL tasks + deterministic Python decomposition/contribution tasks.
-   - Open-ended data science: 1 SQL dataset task + 1 dependent `autonomous_research` Python task.
+1. SQL Tasks (`agent="sql"`): Prefer `QuerySpec(mode="structured", ...)` for standard metrics and dimensions. Reserve `mode="autonomous"` ONLY for custom multi-table behavioral/cohort queries.
+2. Python Tasks (`agent="python"`): Prefer deterministic tools (`revenue_decomposition`, `contribution_analysis`, `period_comparison`, `statistical_summary`, `trend_analysis`, `forecast_linear`). Reserve `autonomous_research` ONLY for open-ended statistical/ML tasks.
+3. Lean DAG Design: Simple lookups use 1 structured SQL task; Comparisons/Reports use 2-4 structured SQL tasks + deterministic Python tasks; Open-ended data science uses 1 SQL task + 1 `autonomous_research` Python task.
 """
 
 _OPEN_ENDED_KEYWORDS = (
@@ -50,8 +41,6 @@ _OPEN_ENDED_KEYWORDS = (
 
 
 class PlannerAgent:
-    """Creates dynamic task-DAG `PlanDraft` contracts using OpenAI gpt-6.1-sol."""
-
     def __init__(self, model_selector: ModelSelector | None = None):
         self.selector = model_selector or ModelSelector()
 
@@ -69,7 +58,6 @@ class PlannerAgent:
         route = route_decision.get("route", "SIMPLE_SQL")
         q_lower = question.lower()
 
-        # Zero-token fast-path planning for simple single-metric lookups in live execution
         is_simple_lookup = (
             type(self.selector) is ModelSelector
             and route in ("SIMPLE_SQL", "CONTEXTUAL_FOLLOWUP")
@@ -80,48 +68,30 @@ class PlannerAgent:
         if is_simple_lookup:
             sql_task = self._build_lookup_sql_task(intent)
             fast_draft = PlanDraft(
-                objective=question,
-                complexity="lookup",
+                objective=question, complexity="lookup",
                 metrics=[intent.metric if intent.metric in APPROVED_METRICS else "gross_revenue"],  # type: ignore[list-item]
-                dimensions=[],
-                period_key=intent.period,
-                filters=[],
-                tasks=[sql_task],
+                dimensions=[], period_key=intent.period, filters=[], tasks=[sql_task],
                 hypotheses_required=False,
                 output=OutputRequirements(format="direct_answer" if (intent.kind == "total" or intent.n == 1) else "answer_with_visuals"),
                 budgets=BudgetSpec(max_queries=2, max_refinements=0, max_seconds=60),
             )
             fast_usage = ModelUsageItem(
-                agent_role="Planning Agent (Fast-Path)",
-                task_type=TaskType.INVESTIGATION_PLANNING.value,
-                model="deterministic",
-                reasoning_effort="none",
-                duration_ms=1,
-                tokens=0,
-                cost_usd=0.0,
+                agent_role="Planning Agent (Fast-Path)", task_type=TaskType.INVESTIGATION_PLANNING.value,
+                model="deterministic", reasoning_effort="none", duration_ms=1, tokens=0, cost_usd=0.0,
             )
             return self._post_normalize_draft(fast_draft, question, intent, route), fast_usage
 
-        input_payload = {
-            "question": question,
-            "extracted_intent": intent.model_dump(),
-            "jev_routing_hint": route_decision,
-            "previous_context": {k: previous_context.get(k) for k in ("last_metric", "last_period", "last_filters", "previous_question")},
-            "approved_metrics": list(APPROVED_METRICS.keys()),
-            "approved_dimensions": list(APPROVED_DIMENSIONS.keys()),
-            "approved_python_tools": [
-                "autonomous_research", "custom_python", "period_comparison", "contribution_analysis",
-                "revenue_decomposition", "statistical_summary", "trend_analysis", "anomaly_detection",
-                "correlation_analysis", "distribution_analysis", "data_quality_check", "forecast_linear",
-            ],
-            "data_range": {"min_date": DATA_MIN_DATE, "max_date": DATA_MAX_DATE},
-            "permissions": permissions,
-            "schema_summary": schema_context[:1500],
-        }
-
         parsed, usage = self.selector.parse_structured(
             task_type=TaskType.INVESTIGATION_PLANNING, response_model=PlanDraft,
-            system_instructions=PLANNER_SYSTEM_PROMPT, input_payload=input_payload, custom_effort="low",
+            system_instructions=PLANNER_SYSTEM_PROMPT,
+            input_payload={
+                "question": question, "extracted_intent": intent.model_dump(), "jev_routing_hint": route_decision,
+                "previous_context": {k: previous_context.get(k) for k in ("last_metric", "last_period", "last_filters", "previous_question")},
+                "approved_metrics": list(APPROVED_METRICS.keys()), "approved_dimensions": list(APPROVED_DIMENSIONS.keys()),
+                "data_range": {"min_date": DATA_MIN_DATE, "max_date": DATA_MAX_DATE},
+                "permissions": permissions, "schema_summary": schema_context[:1500],
+            },
+            custom_effort="low",
         )
         usage_item = ModelUsageItem(
             agent_role="Planning Agent", task_type=usage.task_type, model=usage.model,
@@ -167,7 +137,7 @@ class PlannerAgent:
             if not any(t.agent == "python" for t in kept_tasks):
                 kept_tasks.append(TaskDraft(
                     id="autonomous_python_analysis", title="Autonomous Python Statistical Investigation", agent="python",
-                    purpose=f"Autonomously design and execute appropriate Python analysis for: {question}",
+                    purpose=f"Autonomously design and execute Python analysis for: {question}",
                     depends_on=sql_ids[:2], priority=2,
                     python_spec=PythonToolSpec(tool="autonomous_research", mode="autonomous", input_task_ids=sql_ids[:2], objective=question),
                 ))
@@ -201,7 +171,7 @@ class PlannerAgent:
                     tool_name = "forecast_linear" if wants_forecast else "statistical_summary"
                     kept_tasks.append(TaskDraft(
                         id=f"py_{tool_name}", title=f"Run {tool_name.replace('_', ' ')}", agent="python",
-                        purpose=f"Compute {tool_name.replace('_', ' ')} on {sql_tasks[0].id}", depends_on=[sql_tasks[0].id], priority=2,
+                        purpose=f"Compute {tool_name} on {sql_tasks[0].id}", depends_on=[sql_tasks[0].id], priority=2,
                         python_spec=PythonToolSpec(tool=tool_name, input_task_ids=[sql_tasks[0].id]),  # type: ignore[arg-type]
                     ))
 
@@ -221,7 +191,6 @@ class PlannerAgent:
             })
 
         metric = (draft.metrics[0] if draft.metrics else intent.metric) or "gross_revenue"
-        # Convert any non-open-ended SQL tasks in standard investigations to structured mode so they compile with 0 LLM tokens
         if not has_open_ended and type(self.selector) is ModelSelector:
             tasks_by_id = {
                 t.id: (
@@ -267,29 +236,28 @@ class PlannerAgent:
                 hyp_deps = [tid for tid in ("baseline", "product_line_bridge", "country_bridge") if tid in tasks_by_id]
                 tasks_by_id["formulate_hypotheses"] = TaskDraft(
                     id="formulate_hypotheses", title="Formulate & Test Root-Cause Hypotheses", agent="hypothesis",
-                    purpose="Generate falsifiable root-cause hypotheses from baseline and dimensional variances",
+                    purpose="Generate falsifiable root-cause hypotheses",
                     depends_on=hyp_deps, priority=2, hypothesis_spec=HypothesisSpec(focus=draft.objective or question, max_hypotheses=4),
                 )
             if not any(t.agent == "python" and t.python_spec and t.python_spec.tool == "revenue_decomposition" for t in tasks_by_id.values()):
                 tasks_by_id["decompose_revenue"] = TaskDraft(
                     id="decompose_revenue", title="Order Volume vs AOV Revenue Decomposition", agent="python",
-                    purpose="Decompose net revenue change into order count effect, AOV effect, and interaction term",
+                    purpose="Decompose net revenue change into order count effect and AOV effect",
                     depends_on=["baseline"], priority=2, python_spec=PythonToolSpec(tool="revenue_decomposition", input_task_ids=["baseline"]),
                 )
             for bridge_id, py_id, title in (("product_line_bridge", "contrib_product_line", "Product Line Contribution Reconciliation"), ("country_bridge", "contrib_country", "Country Contribution Reconciliation")):
                 if bridge_id in tasks_by_id and py_id not in tasks_by_id:
                     tasks_by_id[py_id] = TaskDraft(
                         id=py_id, title=title, agent="python",
-                        purpose=f"Reconcile {bridge_id} sum of changes against baseline net change and compute percentage contributions",
+                        purpose=f"Reconcile {bridge_id} sum of changes against baseline net change",
                         depends_on=["baseline", bridge_id], priority=2,
                         python_spec=PythonToolSpec(tool="contribution_analysis", input_task_ids=[bridge_id, "baseline"]),
                     )
             if not any(t.agent == "python" for t in tasks_by_id.values()) or (has_open_ended and not any(t.agent == "python" and t.python_spec and (t.python_spec.tool in ("autonomous_research", "custom_python") or t.python_spec.mode == "autonomous") for t in tasks_by_id.values())):
-                dep_candidates = [tid for tid in ("baseline", "product_line_bridge", "country_bridge") if tid in tasks_by_id]
-                if dep_candidates:
+                if dep_candidates := [tid for tid in ("baseline", "product_line_bridge", "country_bridge") if tid in tasks_by_id]:
                     tasks_by_id["autonomous_statistical_investigation"] = TaskDraft(
                         id="autonomous_statistical_investigation", title="Autonomous Statistical & Multivariate Investigation", agent="python",
-                        purpose=f"Autonomously explore patterns, test statistical significance, and detect structural drivers for: {question}",
+                        purpose=f"Autonomously explore patterns and test statistical significance for: {question}",
                         depends_on=dep_candidates[:3], priority=2,
                         python_spec=PythonToolSpec(tool="autonomous_research", mode="autonomous", input_task_ids=dep_candidates[:3], objective=draft.objective or question),
                     )
@@ -309,7 +277,7 @@ class PlannerAgent:
             target_sql = next((sid for sid in sql_ids if sid != "baseline"), sql_ids[0])
             tasks_by_id["compare_periods"] = TaskDraft(
                 id="compare_periods", title="Period-over-Period Statistical Comparison", agent="python",
-                purpose="Compute period-over-period deltas, percentage changes, and concentration",
+                purpose="Compute period-over-period deltas and percentage changes",
                 depends_on=[target_sql], priority=2, python_spec=PythonToolSpec(tool="period_comparison", input_task_ids=[target_sql]),
             )
         return draft.model_copy(update={
@@ -401,7 +369,8 @@ class PlannerAgent:
     def build_refinement_tasks(self, plan: AnalysisPlan, requests: list[RefinementRequest], completed_task_ids: set[str]) -> list[TaskDraft]:
         drafts: list[TaskDraft] = []
         metric = plan.metrics[0] if plan.metrics else "gross_revenue"
-        is_comp = plan.complexity != "lookup"
+        comp = "previous_period" if plan.complexity != "lookup" else "none"
+        order = "change_asc" if plan.complexity != "lookup" else "value_desc"
 
         for idx, req in enumerate(requests):
             if req.proposed_task is not None:
@@ -412,13 +381,13 @@ class PlannerAgent:
                 drafts.append(TaskDraft(
                     id=f"refine_sales_rep_{idx+1}", title="Sales Representative Variance Breakdown", agent="sql",
                     purpose=req.reason, priority=req.priority,
-                    query_spec=QuerySpec(metric=metric, dimensions=["sales_rep"], comparison="previous_period" if is_comp else "none", order="change_asc" if is_comp else "value_desc"),  # type: ignore[arg-type]
+                    query_spec=QuerySpec(metric=metric, dimensions=["sales_rep"], comparison=comp, order=order),  # type: ignore[arg-type]
                 ))
             elif "office" in gap_lower or "territory" in gap_lower:
                 drafts.append(TaskDraft(
                     id=f"refine_office_{idx+1}", title="Sales Office Variance Breakdown", agent="sql",
                     purpose=req.reason, priority=req.priority,
-                    query_spec=QuerySpec(metric=metric, dimensions=["office"], comparison="previous_period" if is_comp else "none", order="change_asc" if is_comp else "value_desc"),  # type: ignore[arg-type]
+                    query_spec=QuerySpec(metric=metric, dimensions=["office"], comparison=comp, order=order),  # type: ignore[arg-type]
                 ))
             elif "customer" in gap_lower and "customer_bridge" not in completed_task_ids:
                 drafts.append(TaskDraft(
@@ -445,12 +414,17 @@ class PlannerAgent:
                     python_spec=PythonToolSpec(tool="autonomous_research", mode="autonomous", input_task_ids=["trend"], objective=req.reason),
                 ))
             else:
-                sql_deps = [t.id for t in plan.tasks if t.agent == "sql" and t.id in completed_task_ids][:2]
-                if sql_deps and req.kind in ("statistical_test", "verification", "custom_analysis"):
+                existing_py = plan.task(req.gap)
+                py_inputs = (
+                    existing_py.python_spec.input_task_ids
+                    if (existing_py and existing_py.agent == "python" and existing_py.python_spec)
+                    else [t.id for t in plan.tasks if t.agent == "sql" and t.id in completed_task_ids][:2]
+                )
+                if py_inputs and req.kind in ("recalculate", "statistical_test", "drill_down", "resolve_contradiction", "verification", "custom_analysis"):
                     drafts.append(TaskDraft(
                         id=f"refine_autonomous_py_{idx+1}", title=f"Autonomous Follow-Up Analysis ({req.gap})",
-                        agent="python", purpose=req.reason, depends_on=sql_deps, priority=req.priority,
-                        python_spec=PythonToolSpec(tool="autonomous_research", mode="autonomous", input_task_ids=sql_deps, objective=f"{req.gap}: {req.reason}"),
+                        agent="python", purpose=req.reason, depends_on=py_inputs, priority=req.priority,
+                        python_spec=PythonToolSpec(tool="autonomous_research", mode="autonomous", input_task_ids=py_inputs, objective=f"{req.gap}: {req.reason}"),
                     ))
                 else:
                     drafts.append(TaskDraft(
@@ -463,26 +437,22 @@ class PlannerAgent:
     def plan(
         self, intent: QuestionIntent, question: str, route: str, schema_context: str,
     ) -> tuple[LegacyAnalysisPlan, ModelUsageItem | None]:
-        """Backward-compatible wrapper returning `(LegacyAnalysisPlan, ModelUsageItem)`."""
         if route in ("SIMPLE_SQL", "CONTEXTUAL_FOLLOWUP") and intent.kind not in ("deep", "comparative"):
             task = PlanTask(id=intent.kind, kind=intent.kind, purpose=f"Execute analytical measurement for {intent.metric} ({intent.kind})")
             return LegacyAnalysisPlan(tasks=[task], hypotheses=[]), None
 
-        system_instructions = (
-            "You are a Senior Strategic Data Analyst and Investigation Planner for ClassicModels retail enterprise.\n"
-            "Formulate measurable, testable business hypotheses and an investigation task plan.\n"
-            "Always include 'baseline' for root-cause analysis and return strictly in the AnalysisPlan schema format."
-        )
         plan, usage = self.selector.parse_structured(
             task_type=TaskType.INVESTIGATION_PLANNING, response_model=LegacyAnalysisPlan,
-            system_instructions=system_instructions,
+            system_instructions=(
+                "You are a Senior Strategic Data Analyst and Investigation Planner for ClassicModels.\n"
+                "Formulate measurable business hypotheses and an investigation task plan. Always include 'baseline'."
+            ),
             input_payload={"question": question, "intent": intent.model_dump(), "route": route, "available_tasks": AVAILABLE_DEEP_TASKS, "schema_summary": schema_context},
         )
         task_kinds = [t.kind for t in plan.tasks if t.kind in AVAILABLE_DEEP_TASKS]
         if "baseline" not in task_kinds:
             task_kinds.insert(0, "baseline")
-        deduped_kinds = list(dict.fromkeys(task_kinds))[:6]
-        final_tasks = [PlanTask(id=k, kind=k, purpose=AVAILABLE_DEEP_TASKS.get(k, "Investigate business dimension")) for k in deduped_kinds]
+        final_tasks = [PlanTask(id=k, kind=k, purpose=AVAILABLE_DEEP_TASKS.get(k, "Investigate dimension")) for k in list(dict.fromkeys(task_kinds))[:6]]
         usage_item = ModelUsageItem(
             agent_role="Investigation Planner", task_type=usage.task_type, model=usage.model,
             reasoning_effort=usage.reasoning_effort, duration_ms=usage.duration_ms,

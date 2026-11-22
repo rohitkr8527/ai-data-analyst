@@ -1,7 +1,5 @@
-"""Secure, provider-independent Python Sandbox Execution Service."""
+"""Isolated Python Sandbox Execution Service."""
 from __future__ import annotations
-
-from abc import ABC, abstractmethod
 import ast
 from dataclasses import dataclass, field
 import hashlib
@@ -17,9 +15,8 @@ import time
 from typing import Any, Literal
 import uuid
 import pandas as pd
-
 from app.config import PROJECT_ROOT, settings
-from app.exceptions import SandboxSecurityError, SandboxUnavailableError
+from app.exceptions import SandboxSecurityError
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +28,6 @@ class SandboxLimits:
     max_output_bytes: int = 65536
     max_files: int = 25
     allow_network: bool = False
-
-
-@dataclass(frozen=True)
-class DataHandlingPolicy:
-    allow_external_transfer: bool = False
-    redacted_columns: tuple[str, ...] = ()
 
 
 @dataclass
@@ -93,19 +84,22 @@ FORBIDDEN_IMPORTS = {
     "pty", "fcntl", "resource", "signal", "importlib", "pkgutil", "runpy",
     "code", "codeop", "socketserver", "asyncio", "ssl", "certifi",
 }
-FORBIDDEN_CALLS = {"eval", "exec", "compile", "__import__", "breakpoint", "input"}
-FORBIDDEN_ATTRS = {
+FORBIDDEN_CALLS = {
+    "eval", "exec", "compile", "__import__", "breakpoint", "input",
+    "getattr", "setattr", "delattr", "globals", "locals", "vars", "dir",
+}
+FORBIDDEN_REFLECTION_ATTRS = {
     "__subclasses__", "__bases__", "__mro__", "__globals__", "__code__", "__closure__",
-    "system", "popen", "spawn", "spawnl", "spawnlp", "spawnv", "spawnvp",
-    "execl", "execle", "execlp", "execv", "execve", "execvp", "fork", "forkpty",
-    "startfile", "kill", "killpg", "dlopen",
+    "__class__", "__builtins__", "__dict__", "f_globals", "f_locals", "f_back", "f_builtins",
+    "gi_frame", "cr_frame", "ag_frame",
 }
 FORBIDDEN_OS_ATTRS = {
-    "system", "popen", "spawnl", "spawnle", "spawnlp", "spawnlpe",
+    "system", "popen", "spawn", "spawnl", "spawnle", "spawnlp", "spawnlpe",
     "spawnv", "spawnve", "spawnvp", "spawnvpe", "execl", "execle",
     "execlp", "execlpe", "execv", "execve", "execvp", "execvpe",
-    "fork", "forkpty", "startfile", "kill", "killpg",
+    "fork", "forkpty", "startfile", "kill", "killpg", "dlopen",
 }
+FORBIDDEN_ATTRS = FORBIDDEN_REFLECTION_ATTRS | FORBIDDEN_OS_ATTRS
 
 
 def validate_python_code_ast(code: str) -> tuple[bool, str | None, str | None]:
@@ -120,20 +114,20 @@ def validate_python_code_ast(code: str) -> tuple[bool, str | None, str | None]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name.split(".", 1)[0].lower() in FORBIDDEN_IMPORTS:
-                    raise SandboxSecurityError(f"Forbidden module import '{alias.name}' is not permitted in the analytical sandbox.")
+                    raise SandboxSecurityError(f"Forbidden module import '{alias.name}'.")
         elif isinstance(node, ast.ImportFrom):
             if (node.module or "").split(".", 1)[0].lower() in FORBIDDEN_IMPORTS:
-                raise SandboxSecurityError(f"Forbidden module import 'from {node.module}' is not permitted in the analytical sandbox.")
+                raise SandboxSecurityError(f"Forbidden module import 'from {node.module}'.")
         elif isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_CALLS:
-                raise SandboxSecurityError(f"Forbidden builtin call '{node.func.id}()' is not permitted in the analytical sandbox.")
+                raise SandboxSecurityError(f"Forbidden builtin call '{node.func.id}()'.")
             if isinstance(node.func, ast.Attribute) and node.func.attr in FORBIDDEN_ATTRS:
-                raise SandboxSecurityError(f"Forbidden method call '.{node.func.attr}()' is not permitted in the analytical sandbox.")
+                raise SandboxSecurityError(f"Forbidden method call '.{node.func.attr}()'.")
         elif isinstance(node, ast.Attribute):
-            if node.attr in ("__subclasses__", "__bases__", "__globals__", "__code__", "__closure__"):
-                raise SandboxSecurityError(f"Forbidden reflection attribute '.{node.attr}' is not permitted in the analytical sandbox.")
+            if node.attr in FORBIDDEN_REFLECTION_ATTRS:
+                raise SandboxSecurityError(f"Forbidden reflection attribute '.{node.attr}'.")
             if isinstance(node.value, ast.Name) and node.value.id == "os" and node.attr in FORBIDDEN_OS_ATTRS:
-                raise SandboxSecurityError(f"Forbidden OS process operation 'os.{node.attr}' is not permitted in the analytical sandbox.")
+                raise SandboxSecurityError(f"Forbidden OS process operation 'os.{node.attr}'.")
     return True, None, None
 
 
@@ -160,27 +154,34 @@ def _json_safe(val: Any) -> Any:
         return str(val)
 
 
-def _runner_script_template() -> str:
-    return r'''import json, math, os, platform, sys, traceback, warnings
+_RUNNER_SCRIPT = r'''import builtins, json, math, os, platform, sys, traceback, warnings
 import numpy as np, pandas as pd, scipy
 from scipy import stats
 
 WORKSPACE_DIR, USER_CODE_PATH, OUTPUT_JSON_PATH = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2]), os.path.abspath(sys.argv[3])
 PROJECT_ROOT_DIR = os.path.abspath(sys.argv[4]) if len(sys.argv) > 4 else ""
+MAX_MEMORY_MB = int(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5].isdigit() else 512
+if os.name != "nt":
+    try:
+        import resource
+        mem_bytes = MAX_MEMORY_MB * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+    except Exception:
+        pass
+
 SYS_PREFIX_DIR, SYS_BASE_PREFIX_DIR = os.path.abspath(sys.prefix), os.path.abspath(sys.base_prefix)
-ALLOWED_READ_DIRS = [WORKSPACE_DIR, SYS_PREFIX_DIR, SYS_BASE_PREFIX_DIR]
-if os.name == "nt":
-    win_dir = os.environ.get("SYSTEMROOT", r"C:\Windows")
-    ALLOWED_READ_DIRS.extend([os.path.abspath(os.path.join(win_dir, sub)) for sub in ("Fonts", "System32", "Globalization")])
-else:
-    ALLOWED_READ_DIRS.extend(["/usr/lib", "/usr/local/lib", "/usr/share/fonts", "/lib"])
+ALLOWED_READ_DIRS = (WORKSPACE_DIR, SYS_PREFIX_DIR, SYS_BASE_PREFIX_DIR) + (
+    tuple(os.path.abspath(os.path.join(os.environ.get("SYSTEMROOT", r"C:\Windows"), sub)) for sub in ("Fonts", "System32", "Globalization"))
+    if os.name == "nt" else ("/usr/lib", "/usr/local/lib", "/usr/share/fonts", "/lib")
+)
 
 def _norm(p):
     if isinstance(p, bytes): p = p.decode("utf-8", errors="replace")
     return os.path.normcase(os.path.abspath(str(p)))
 
 WS_NORM, PROJ_NORM = _norm(WORKSPACE_DIR), (_norm(PROJECT_ROOT_DIR) if PROJECT_ROOT_DIR else "")
-ALLOWED_READ_NORMS = [_norm(d) for d in ALLOWED_READ_DIRS if d]
+ALLOWED_READ_NORMS = tuple(_norm(d) for d in ALLOWED_READ_DIRS if d)
+_WRITE_FLAGS = getattr(os, "O_WRONLY", 1) | getattr(os, "O_RDWR", 2) | getattr(os, "O_APPEND", 8) | getattr(os, "O_CREAT", 256) | getattr(os, "O_TRUNC", 512)
 
 def _in_dir(path_norm, dir_norm):
     return bool(dir_norm) and (path_norm == dir_norm or path_norm.startswith(dir_norm + os.sep))
@@ -192,47 +193,53 @@ def _is_secret_or_app_file(path_norm):
         return not (_in_dir(path_norm, WS_NORM) or _in_dir(path_norm, _norm(SYS_PREFIX_DIR)))
     return False
 
-_USER_CODE_ACTIVE = False
-
-def _sandbox_audit_hook(event, args):
-    if not _USER_CODE_ACTIVE: return
-    if event.startswith(("urllib.", "http.", "ftplib.", "smtplib.", "poplib.", "imaplib.")):
-        raise PermissionError(f"Sandbox security violation: network event '{event}' is prohibited.")
-    if event.startswith("socket.") and event != "socket.gethostname":
-        raise PermissionError(f"Sandbox security violation: socket operation '{event}' is prohibited.")
-    if event in ("subprocess.Popen", "os.system", "os.exec", "os.spawn", "os.startfile", "os.fork", "os.kill", "winreg.OpenKey", "winreg.CreateKey"):
-        raise PermissionError(f"Sandbox security violation: system event '{event}' is prohibited.")
-    if event == "ctypes.dlopen":
-        lib_name = str(args[0]) if args and args[0] is not None else ""
-        lib_norm = _norm(lib_name) if (os.sep in lib_name or "/" in lib_name) else lib_name.lower()
-        in_py_env = _in_dir(lib_norm, _norm(SYS_PREFIX_DIR)) or _in_dir(lib_norm, _norm(SYS_BASE_PREFIX_DIR))
-        if not (in_py_env or lib_name.lower() in {"kernel32", "kernel32.dll", "psapi.dll", "ucrtbase.dll"}):
-            raise PermissionError(f"Sandbox security violation: dynamic library load '{lib_name}' is prohibited.")
-    if event == "open" and args:
-        target = args[0]
-        if isinstance(target, int): return
-        mode = str(args[1]) if len(args) > 1 and args[1] is not None else "r"
-        p_norm = _norm(target)
-        if _is_secret_or_app_file(p_norm):
-            raise PermissionError(f"Sandbox security violation: unauthorized file access to '{target}'.")
-        if any(ch in mode for ch in ("w", "a", "x", "+")):
-            if not _in_dir(p_norm, WS_NORM):
-                raise PermissionError(f"Sandbox security violation: file writes outside workspace are prohibited ('{target}').")
-        elif not any(_in_dir(p_norm, d) for d in ALLOWED_READ_NORMS):
-            raise PermissionError(f"Sandbox security violation: file reads outside workspace/runtime are prohibited ('{target}').")
-    elif event in ("os.listdir", "os.scandir", "os.stat") and args and args[0] is not None:
-        target = args[0]
-        if isinstance(target, int): return
-        p_norm = _norm(target)
-        if _is_secret_or_app_file(p_norm) or not any(_in_dir(p_norm, d) for d in ALLOWED_READ_NORMS):
-            raise PermissionError(f"Sandbox security violation: unauthorized path inspection '{target}'.")
-    elif event in ("os.remove", "os.unlink", "os.rmdir", "os.mkdir", "os.chmod", "os.truncate") and args:
-        if not _in_dir(_norm(args[0]), WS_NORM):
-            raise PermissionError(f"Sandbox security violation: filesystem mutation outside workspace is prohibited ('{args[0]}').")
-    elif event in ("os.rename", "os.replace") and len(args) >= 2:
-        for arg in args[:2]:
-            if not _in_dir(_norm(arg), WS_NORM):
-                raise PermissionError(f"Sandbox security violation: filesystem move outside workspace is prohibited ('{arg}').")
+def _make_audit_controller():
+    active = False
+    secret = object()
+    def set_active(tok, state):
+        nonlocal active
+        if tok is secret: active = bool(state)
+    def hook(event, args):
+        if not active: return
+        if event.startswith(("urllib.", "http.", "ftplib.", "smtplib.", "poplib.", "imaplib.")):
+            raise PermissionError(f"Sandbox security violation: network event '{event}' is prohibited.")
+        if event.startswith("socket.") and event != "socket.gethostname":
+            raise PermissionError(f"Sandbox security violation: socket operation '{event}' is prohibited.")
+        if event in ("subprocess.Popen", "os.system", "os.exec", "os.spawn", "os.startfile", "os.fork", "os.kill", "winreg.OpenKey", "winreg.CreateKey"):
+            raise PermissionError(f"Sandbox security violation: system event '{event}' is prohibited.")
+        if event == "ctypes.dlopen":
+            lib_name = str(args[0]) if args and args[0] is not None else ""
+            lib_norm = _norm(lib_name) if (os.sep in lib_name or "/" in lib_name) else lib_name.lower()
+            in_py_env = _in_dir(lib_norm, _norm(SYS_PREFIX_DIR)) or _in_dir(lib_norm, _norm(SYS_BASE_PREFIX_DIR))
+            if not (in_py_env or lib_name.lower() in {"kernel32", "kernel32.dll", "psapi.dll", "ucrtbase.dll"}):
+                raise PermissionError(f"Sandbox security violation: dynamic library load '{lib_name}' is prohibited.")
+        if event == "open" and args:
+            target = args[0]
+            if isinstance(target, int): return
+            mode = str(args[1]) if len(args) > 1 and args[1] is not None else "r"
+            flags = args[2] if len(args) > 2 and isinstance(args[2], int) else 0
+            p_norm = _norm(target)
+            if _is_secret_or_app_file(p_norm):
+                raise PermissionError(f"Sandbox security violation: unauthorized file access to '{target}'.")
+            if any(ch in mode for ch in ("w", "a", "x", "+")) or (flags & _WRITE_FLAGS):
+                if not _in_dir(p_norm, WS_NORM):
+                    raise PermissionError(f"Sandbox security violation: file writes outside workspace are prohibited ('{target}').")
+            elif not any(_in_dir(p_norm, d) for d in ALLOWED_READ_NORMS):
+                raise PermissionError(f"Sandbox security violation: file reads outside workspace/runtime are prohibited ('{target}').")
+        elif event in ("os.listdir", "os.scandir", "os.stat") and args and args[0] is not None:
+            target = args[0]
+            if isinstance(target, int): return
+            p_norm = _norm(target)
+            if _is_secret_or_app_file(p_norm) or not any(_in_dir(p_norm, d) for d in ALLOWED_READ_NORMS):
+                raise PermissionError(f"Sandbox security violation: unauthorized path inspection '{target}'.")
+        elif event in ("os.remove", "os.unlink", "os.rmdir", "os.mkdir", "os.chmod", "os.truncate") and args:
+            if not _in_dir(_norm(args[0]), WS_NORM):
+                raise PermissionError(f"Sandbox security violation: filesystem mutation outside workspace is prohibited ('{args[0]}').")
+        elif event in ("os.rename", "os.replace") and len(args) >= 2:
+            for arg in args[:2]:
+                if not _in_dir(_norm(arg), WS_NORM):
+                    raise PermissionError(f"Sandbox security violation: filesystem move outside workspace is prohibited ('{arg}').")
+    return hook, set_active, secret
 
 def _clean_json(val):
     if val is None or isinstance(val, (bool, str, int)): return val
@@ -303,59 +310,67 @@ def save_figure(fig, filename="figure.png"):
 
 def save_state(key, value):
     state_file = os.path.join(WORKSPACE_DIR, "session_state.json")
-    data = json.load(open(state_file, "r", encoding="utf-8")) if os.path.exists(state_file) else {}
+    data = {}
+    if os.path.exists(state_file):
+        with open(state_file, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
     data[str(key)] = _clean_json(value)
-    with open(state_file, "w", encoding="utf-8") as fh: json.dump(data, fh)
+    with open(state_file, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
 
 def load_state(key, default=None):
     state_file = os.path.join(WORKSPACE_DIR, "session_state.json")
-    return json.load(open(state_file, "r", encoding="utf-8")).get(str(key), default) if os.path.exists(state_file) else default
+    if not os.path.exists(state_file):
+        return default
+    with open(state_file, "r", encoding="utf-8") as fh:
+        return json.load(fh).get(str(key), default)
 
 platform.uname()
 with open(USER_CODE_PATH, "r", encoding="utf-8") as fh: user_code = fh.read()
 
-if "matplotlib" in user_code:
-    try:
-        import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot
-    except Exception: pass
-if "plotly" in user_code:
-    try: import plotly.express, plotly.graph_objects
-    except Exception: pass
-if "sklearn" in user_code:
-    try: import sklearn, threadpoolctl; threadpoolctl.threadpool_info()
-    except Exception: pass
-if "statsmodels" in user_code:
-    try: import statsmodels.api
-    except Exception: pass
-if "polars" in user_code:
-    try: import polars
-    except Exception: pass
+for mod_key, preload in (
+    ("matplotlib", "import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot"),
+    ("plotly", "import plotly.express, plotly.graph_objects"),
+    ("sklearn", "import sklearn, threadpoolctl; threadpoolctl.threadpool_info()"),
+    ("statsmodels", "import statsmodels.api"),
+    ("polars", "import polars"),
+):
+    if mod_key in user_code:
+        try: exec(preload)
+        except Exception: pass
 
 env_versions = {"python": sys.version.split()[0], "numpy": np.__version__, "pandas": pd.__version__, "scipy": scipy.__version__}
+safe_builtins = {k: getattr(builtins, k) for k in dir(builtins) if k not in ("eval", "exec", "compile", "breakpoint", "input", "getattr", "setattr", "delattr", "globals", "locals", "vars", "dir")}
 sandbox_globals = {
-    "__name__": "__main__", "__builtins__": __builtins__, "np": np, "pd": pd, "stats": stats, "scipy": scipy,
+    "__name__": "__sandbox__", "__builtins__": safe_builtins, "np": np, "pd": pd, "stats": stats, "scipy": scipy,
     "math": math, "json": json, "df": primary_df, "datasets": datasets_list, "DATASETS": DATASETS,
     "load_dataset": load_dataset, "list_datasets": list_datasets, "save_result": save_result,
     "save_table": save_table, "save_chart": save_chart, "save_figure": save_figure,
     "save_state": save_state, "load_state": load_state, "RESULTS": _RESULTS,
 }
 
-sys.addaudithook(_sandbox_audit_hook)
-exit_code, error_type, error_message = 0, None, None
-with warnings.catch_warnings(record=True) as caught_warnings:
-    warnings.simplefilter("always")
-    try:
-        compiled = compile(user_code, "sandbox_analysis.py", "exec")
-        _USER_CODE_ACTIVE = True
-        exec(compiled, sandbox_globals)
-    except PermissionError as sec_exc:
-        exit_code, error_type, error_message = 2, "SecurityViolation", str(sec_exc)
-    except Exception as exc:
-        exit_code, error_type, error_message = 1, type(exc).__name__, traceback.format_exc()
-    finally:
-        _USER_CODE_ACTIVE = False
-        for w in caught_warnings[:10]:
-            _RESULTS["warnings"].append(f"{w.category.__name__}: {w.message}")
+def _run_sandboxed():
+    hook, set_active, tok = _make_audit_controller()
+    sys.addaudithook(hook)
+    code_exit, err_t, err_m = 0, None, None
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        try:
+            compiled = compile(user_code, "sandbox_analysis.py", "exec")
+            set_active(tok, True)
+            exec(compiled, sandbox_globals)
+        except PermissionError as sec_exc:
+            code_exit, err_t, err_m = 2, "SecurityViolation", str(sec_exc)
+        except Exception as exc:
+            code_exit, err_t, err_m = 1, type(exc).__name__, traceback.format_exc()
+        finally:
+            set_active(tok, False)
+            for w in caught_warnings[:10]:
+                if w.category is not ResourceWarning:
+                    _RESULTS["warnings"].append(f"{w.category.__name__}: {w.message}")
+    return code_exit, err_t, err_m
+
+exit_code, error_type, error_message = _run_sandboxed()
 
 if not _RESULTS["summary"] and isinstance(sandbox_globals.get("result"), dict):
     _RESULTS["summary"] = _clean_json(sandbox_globals["result"])
@@ -375,19 +390,8 @@ sys.exit(exit_code)
 '''
 
 
-class SandboxProvider(ABC):
-    @abstractmethod
-    def create_workspace(self, run_id: str, task_id: str, limits: SandboxLimits | None = None) -> SandboxWorkspace: ...
-    @abstractmethod
-    def stage_dataset(self, workspace: SandboxWorkspace, name: str, rows: list[dict[str, Any]], columns: list[str]) -> dict[str, Any]: ...
-    @abstractmethod
-    def execute_code(self, workspace: SandboxWorkspace, code: str, timeout_seconds: int | None = None) -> SandboxExecutionResult: ...
-    @abstractmethod
-    def destroy_workspace(self, workspace: SandboxWorkspace) -> None: ...
-
-
-class IsolatedProcessSandboxProvider(SandboxProvider):
-    """OS-process + AST + runtime audit-hook isolated Python sandbox (Windows & Linux)."""
+class IsolatedProcessSandboxProvider:
+    """OS-process + AST + runtime audit-hook isolated Python sandbox."""
 
     def __init__(self, base_dir: Path | None = None, python_executable: str | None = None):
         default_dir = Path(settings.dataset_store_path).resolve().parent / "sandboxes"
@@ -406,7 +410,11 @@ class IsolatedProcessSandboxProvider(SandboxProvider):
         (ws_dir / "session_state.json").write_text("{}", encoding="utf-8")
         return SandboxWorkspace(
             workspace_id=ws_id, run_id=run_id, task_id=task_id, root_dir=ws_dir,
-            limits=limits or SandboxLimits(timeout_seconds=settings.sandbox_timeout_seconds, max_memory_mb=settings.sandbox_max_memory_mb, max_output_bytes=settings.sandbox_max_output_bytes),
+            limits=limits or SandboxLimits(
+                timeout_seconds=settings.sandbox_timeout_seconds,
+                max_memory_mb=settings.sandbox_max_memory_mb,
+                max_output_bytes=settings.sandbox_max_output_bytes,
+            ),
         )
 
     def stage_dataset(self, workspace: SandboxWorkspace, name: str, rows: list[dict[str, Any]], columns: list[str]) -> dict[str, Any]:
@@ -441,7 +449,7 @@ class IsolatedProcessSandboxProvider(SandboxProvider):
         runner_path = workspace.root_dir / f"_runner_{step_num}.py"
         output_path = workspace.root_dir / f"_output_{step_num}.json"
         user_code_path.write_text(code, encoding="utf-8")
-        runner_path.write_text(_runner_script_template(), encoding="utf-8")
+        runner_path.write_text(_RUNNER_SCRIPT, encoding="utf-8")
 
         cache_dir = str(workspace.root_dir / ".cache")
         clean_env: dict[str, str] = {
@@ -458,7 +466,7 @@ class IsolatedProcessSandboxProvider(SandboxProvider):
         start = time.monotonic()
         try:
             proc = subprocess.run(
-                [self.python_executable, "-I", "-B", str(runner_path), str(workspace.root_dir), str(user_code_path), str(output_path), str(PROJECT_ROOT)],
+                [self.python_executable, "-I", "-B", str(runner_path), str(workspace.root_dir), str(user_code_path), str(output_path), str(PROJECT_ROOT), str(workspace.limits.max_memory_mb)],
                 cwd=str(workspace.root_dir), env=clean_env, capture_output=True, text=True, timeout=eff_timeout,
             )
             duration_ms = round((time.monotonic() - start) * 1000)
@@ -481,8 +489,8 @@ class IsolatedProcessSandboxProvider(SandboxProvider):
         if output_path.exists():
             try:
                 out_data = json.loads(output_path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                logger.warning("Could not parse sandbox output JSON: %s", exc)
+            except Exception:
+                pass
 
         err_t, err_m = out_data.get("error_type"), out_data.get("error_message")
         if proc.returncode == 2 or err_t == "SecurityViolation":
@@ -527,56 +535,22 @@ class IsolatedProcessSandboxProvider(SandboxProvider):
         return removed
 
 
-class ExternalSandboxProviderStub(SandboxProvider):
-    def __init__(self, provider_name: str, policy: DataHandlingPolicy):
-        self.provider_name = provider_name
-        self.policy = policy
-
-    def create_workspace(self, run_id: str, task_id: str, limits: SandboxLimits | None = None) -> SandboxWorkspace:
-        if self.provider_name == "e2b" and not self.policy.allow_external_transfer:
-            raise SandboxSecurityError("Data handling policy prohibits transferring database rows to external E2B sandbox when SANDBOX_ALLOW_EXTERNAL_DATA_TRANSFER=false.")
-        raise SandboxUnavailableError(f"Sandbox provider '{self.provider_name}' is not configured or unavailable in this environment. No unsafe host fallback is permitted.")
-
-    def stage_dataset(self, workspace: SandboxWorkspace, name: str, rows: list[dict[str, Any]], columns: list[str]) -> dict[str, Any]:
-        raise SandboxUnavailableError(f"Sandbox provider '{self.provider_name}' unavailable.")
-
-    def execute_code(self, workspace: SandboxWorkspace, code: str, timeout_seconds: int | None = None) -> SandboxExecutionResult:
-        raise SandboxUnavailableError(f"Sandbox provider '{self.provider_name}' unavailable.")
-
-    def destroy_workspace(self, workspace: SandboxWorkspace) -> None:
-        return None
-
-
 class SandboxExecutionService:
-    """High-level facade managing sandbox lifecycle, dataset staging, and execution."""
+    """Manages sandbox lifecycle, dataset staging, and execution."""
 
-    def __init__(self, provider: SandboxProvider | None = None, policy: DataHandlingPolicy | None = None):
-        self.policy = policy or DataHandlingPolicy(allow_external_transfer=settings.sandbox_allow_external_data_transfer)
-        if provider is not None:
-            self.provider = provider
-        elif settings.sandbox_provider == "isolated_process":
-            self.provider = IsolatedProcessSandboxProvider()
-        else:
-            self.provider = ExternalSandboxProviderStub(settings.sandbox_provider, self.policy)
+    def __init__(self, provider: IsolatedProcessSandboxProvider | None = None):
+        self.provider = provider or IsolatedProcessSandboxProvider()
 
     def create_workspace(self, run_id: str, task_id: str, limits: SandboxLimits | None = None) -> SandboxWorkspace:
         return self.provider.create_workspace(run_id=run_id, task_id=task_id, limits=limits)
 
     def stage_dataframe(self, workspace: SandboxWorkspace, name: str, df: pd.DataFrame) -> dict[str, Any]:
-        cols, rows = list(df.columns), (df.to_dict(orient="records") if not df.empty else [])
-        if self.policy.redacted_columns:
-            cols = [c for c in cols if c not in self.policy.redacted_columns]
-            rows = [{k: v for k, v in r.items() if k not in self.policy.redacted_columns} for r in rows]
+        cols = list(df.columns)
+        rows = df.to_dict(orient="records") if not df.empty else []
         return self.provider.stage_dataset(workspace, name, rows, cols)
-
-    def stage_rows(self, workspace: SandboxWorkspace, name: str, columns: list[str], rows: list[dict[str, Any]]) -> dict[str, Any]:
-        return self.provider.stage_dataset(workspace, name, rows, columns)
 
     def execute(self, workspace: SandboxWorkspace, code: str, timeout_seconds: int | None = None) -> SandboxExecutionResult:
         return self.provider.execute_code(workspace, code, timeout_seconds=timeout_seconds)
 
     def destroy_workspace(self, workspace: SandboxWorkspace) -> None:
         self.provider.destroy_workspace(workspace)
-
-    def cleanup_expired_workspaces(self, max_age_seconds: int = 3600) -> int:
-        return self.provider.cleanup_expired(max_age_seconds=max_age_seconds) if isinstance(self.provider, IsolatedProcessSandboxProvider) else 0

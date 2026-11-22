@@ -1,8 +1,4 @@
-"""Public Pydantic API schemas and typed multi-agent data contracts.
-
-Enforces strict typed interfaces for LangGraph nodes, OpenAI structured outputs,
-and frontend client responses.
-"""
+"""Pydantic API schemas and data contracts."""
 from typing import Any, Literal
 from pydantic import BaseModel, Field
 

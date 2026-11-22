@@ -1,4 +1,4 @@
-"""Dynamic Supervisor-Worker LangGraph Orchestration with Evidence-Driven Refinement."""
+"""Dynamic Supervisor-Worker LangGraph Orchestration."""
 from __future__ import annotations
 import logging
 from pathlib import Path
@@ -15,21 +15,18 @@ from app.agents.hypothesis import HypothesisAgent
 from app.agents.planner import PlannerAgent
 from app.agents.python_analyst import PythonAnalysisAgent
 from app.agents.report_agent import ReportGenerationAgent
-from app.agents.reporter import ReporterAgent
+from app.agents.reporter import ReporterAgent, verify_narrative_numbers
 from app.agents.router import JevRoutingDecision, OpenRouterJevRouter, RouteType
 from app.agents.sql_analyst import SQLAnalyst
 from app.config import settings
-from app.exceptions import (
-    DatabaseConnectionError, ProviderAuthError, ProviderError,
-    ProviderRateLimitError, QuerySecurityError,
-)
+from app.exceptions import DatabaseConnectionError, ProviderAuthError, ProviderError, ProviderRateLimitError, QuerySecurityError
 from app.orchestration.contracts import (
     TERMINAL_STATUSES, AnalysisPlan, AnalysisTask, EvidenceRecord,
     EvidenceReview, PlanDraft, QuerySpec, TaskResult, TaskStatus,
 )
 from app.orchestration.state import AnalysisState
 from app.orchestration.validator import PlanValidator
-from app.schemas import ModelUsageItem, PlanTask, QuestionIntent, Report
+from app.schemas import ModelUsageItem, QuestionIntent, Report
 from app.services.dataset_broker import AuthorizedDatasetBroker
 from app.services.dataset_store import DatasetStore
 from app.services.db import ReadOnlyGateway
@@ -45,8 +42,6 @@ WorkflowState = AnalysisState
 
 
 class AnalyticalWorkflow:
-    """Dynamic Supervisor-Worker multi-agent analytical workflow powered by LangGraph."""
-
     def __init__(
         self,
         gateway: ReadOnlyGateway | None = None,
@@ -96,17 +91,12 @@ class AnalyticalWorkflow:
             evt["task_id"] = task_id
         if extra:
             evt.update(extra)
-        cb = self._event_listeners.get(run_id)
-        if cb:
+        if cb := self._event_listeners.get(run_id):
             try:
                 cb(evt)
             except Exception:
                 pass
         return evt
-
-    @staticmethod
-    def _event(stage: str, message: str, status: str = "ok") -> dict[str, Any]:
-        return {"stage": stage, "message": message, "status": status, "timestamp": time.time()}
 
     def _task_failure(
         self, run_id: str, task: AnalysisTask, agent: str, err_msg: str,
@@ -118,12 +108,11 @@ class AnalyticalWorkflow:
             task_id=task.id, agent=agent, status="FAILED", fingerprint=task.fingerprint,
             sql=sql, repair_attempts=repair_attempts, error=err_msg, error_code=error_code,
         )
-        evt = self._emit_event(run_id, stage or task.id, err_msg, "error", task_id=task.id)
         out: dict[str, Any] = {
             "tasks": {task.id: {"status": TaskStatus.FAILED.value, "error": err_msg}},
             "task_results": {task.id: fail_res.model_dump()},
             "errors": [{"task": task.id, "error": err_msg}],
-            "trace": [evt],
+            "trace": [self._emit_event(run_id, stage or task.id, err_msg, "error", task_id=task.id)],
         }
         if models_used is not None:
             out["models_used"] = models_used
@@ -131,20 +120,15 @@ class AnalyticalWorkflow:
 
     def prepare_context(self, state: AnalysisState) -> dict[str, Any]:
         run_id = state.get("run_id") or str(uuid4())
-        question = state["question"]
-        prev_context = state.get("previous_context", {})
         with trace_span("node.prepare_context", run_id=run_id):
-            intent = extract_intent(question, prev_context.get("last_intent"))
+            intent = extract_intent(state["question"], state.get("previous_context", {}).get("last_intent"))
             allowed_tables = sorted(self.validator.allowed_tables & APPROVED_TABLES)
             schema_ctx = self.gateway.catalog.format_llm_schema_context(allowed_tables)
             permissions = {
                 "allowed_tables": allowed_tables, "allow_reports": settings.allow_reports,
                 "allow_forecasting": settings.allow_forecasting, "read_only": True,
             }
-            evt = self._emit_event(
-                run_id, "prepare",
-                f"Resolved metric: '{intent.metric}', period: '{intent.period or 'default'}', tables: {len(allowed_tables)}",
-            )
+            evt = self._emit_event(run_id, "prepare", f"Resolved metric: '{intent.metric}', period: '{intent.period or 'default'}'")
         return {
             "run_id": run_id, "started_at": state.get("started_at") or time.monotonic(),
             "intent": intent.model_dump(), "permissions": permissions, "schema_context": schema_ctx,
@@ -160,13 +144,7 @@ class AnalyticalWorkflow:
                 question=state["question"], context=state.get("previous_context", {}), schema_summary=allowed_tables,
             )
         tokens = decision.input_tokens + decision.output_tokens
-        model_item = {
-            "agent_role": "Jev Decision Router", "task_type": "decision_routing",
-            "model": settings.openrouter_jev_model, "reasoning_effort": "decision_choice",
-            "duration_ms": decision.duration_ms, "tokens": tokens, "cost_usd": decision.cost,
-        }
         prev_budget = state.get("budget_state", {})
-        evt = self._emit_event(run_id, "jev_route", f"Jev route: {decision.route.value} (confidence: {decision.confidence:.2f})")
         return {
             "route_decision": {
                 "route": decision.route.value, "confidence": decision.confidence,
@@ -174,12 +152,16 @@ class AnalyticalWorkflow:
                 "requires_hypotheses_hint": decision.requires_hypotheses_hint,
                 "preferred_output_hint": decision.preferred_output_hint, "duration_ms": decision.duration_ms,
             },
-            "models_used": [model_item],
+            "models_used": [{
+                "agent_role": "Jev Decision Router", "task_type": "decision_routing",
+                "model": settings.openrouter_jev_model, "reasoning_effort": "decision_choice",
+                "duration_ms": decision.duration_ms, "tokens": tokens, "cost_usd": decision.cost,
+            }],
             "budget_state": {
                 "tokens_used": int(prev_budget.get("tokens_used", 0)) + tokens,
                 "cost_usd": round(float(prev_budget.get("cost_usd", 0.0)) + decision.cost, 6),
             },
-            "trace": [evt],
+            "trace": [self._emit_event(run_id, "jev_route", f"Jev route: {decision.route.value} (confidence: {decision.confidence:.2f})")],
         }
 
     def handle_clarification(self, state: AnalysisState) -> dict[str, Any]:
@@ -198,7 +180,7 @@ class AnalyticalWorkflow:
             period=period_info["target_label"], comparison=period_info["previous_label"],
             limitations=[f"Database scope is restricted to ClassicModels records from {DATA_MIN_DATE} to {DATA_MAX_DATE}."],
         )
-        return {"report": report.model_dump(), "trace": [self._emit_event(run_id, "clarification", "Requested user clarification on analytical intent")]}
+        return {"report": report.model_dump(), "trace": [self._emit_event(run_id, "clarification", "Requested user clarification")]}
 
     def handle_unsupported(self, state: AnalysisState) -> dict[str, Any]:
         run_id = state.get("run_id", "")
@@ -212,7 +194,7 @@ class AnalyticalWorkflow:
             status="unsupported", output_mode="direct_answer",
             limitations=["Out of domain analytical request."],
         )
-        return {"report": report.model_dump(), "trace": [self._emit_event(run_id, "unsupported", "Request categorized as out-of-domain by Jev")]}
+        return {"report": report.model_dump(), "trace": [self._emit_event(run_id, "unsupported", "Out-of-domain request")]}
 
     def plan_investigation(self, state: AnalysisState) -> dict[str, Any]:
         run_id = state.get("run_id", "")
@@ -227,10 +209,6 @@ class AnalyticalWorkflow:
                 permissions=state.get("permissions", {}),
             )
         prev_budget = state.get("budget_state", {})
-        evt = self._emit_event(
-            run_id, "plan",
-            f"Planning Agent drafted {len(draft.tasks)} tasks (complexity={draft.complexity}, hypotheses={draft.hypotheses_required})",
-        )
         return {
             "plan": draft.model_dump(),
             "models_used": [usage_item.model_dump()],
@@ -238,7 +216,7 @@ class AnalyticalWorkflow:
                 "tokens_used": int(prev_budget.get("tokens_used", 0)) + usage_item.tokens,
                 "cost_usd": round(float(prev_budget.get("cost_usd", 0.0)) + usage_item.cost_usd, 6),
             },
-            "trace": [evt],
+            "trace": [self._emit_event(run_id, "plan", f"Planning Agent drafted {len(draft.tasks)} tasks (complexity={draft.complexity})")],
         }
 
     def validate_plan_node(self, state: AnalysisState) -> dict[str, Any]:
@@ -259,8 +237,10 @@ class AnalyticalWorkflow:
             }
             for t in plan.tasks
         }
-        evt = self._emit_event(run_id, "validate_plan", f"Validated DAG with {len(plan.tasks)} tasks and {len(plan.dependencies)} dependency edges")
-        return {"plan": plan.model_dump(), "plan_validation": val_report.model_dump(), "tasks": task_map, "trace": [evt]}
+        return {
+            "plan": plan.model_dump(), "plan_validation": val_report.model_dump(), "tasks": task_map,
+            "trace": [self._emit_event(run_id, "validate_plan", f"Validated DAG with {len(plan.tasks)} tasks")],
+        }
 
     def supervisor_node(self, state: AnalysisState) -> dict[str, Any]:
         run_id = state.get("run_id", "")
@@ -274,18 +254,17 @@ class AnalyticalWorkflow:
         trace_events: list[dict[str, Any]] = []
 
         is_cancelled = cancellation_registry.is_cancelled(run_id)
-        is_timed_out = elapsed_s >= plan.budget.max_seconds
-        queries_used = int(budget_state.get("queries_executed", 0))
-        tokens_used = int(budget_state.get("tokens_used", 0))
-        cost_used = float(budget_state.get("cost_usd", 0.0))
-
-        if is_cancelled or is_timed_out:
+        if is_cancelled or elapsed_s >= plan.budget.max_seconds:
             reason = cancellation_registry.reason(run_id) if is_cancelled else f"Run exceeded wall-clock budget ({plan.budget.max_seconds}s)"
             for tid, entry in tasks_map.items():
                 if entry["status"] not in TERMINAL_STATUSES:
                     updates[tid] = {"status": TaskStatus.CANCELLED.value, "error": reason}
-            trace_events.append(self._emit_event(run_id, "supervisor", f"Stopping task scheduling: {reason}", "warning"))
-            return {"tasks": updates, "stop_reason": reason, "trace": trace_events}
+            return {"tasks": updates, "stop_reason": reason, "trace": [self._emit_event(run_id, "supervisor", f"Stopping task scheduling: {reason}", "warning")]}
+
+        live_sql_done = sum(1 for r in task_results.values() if r.get("agent") == "sql" and r.get("status") == "COMPLETED" and not r.get("reused"))
+        queries_used = max(int(budget_state.get("queries_executed", 0)), live_sql_done)
+        tokens_used = max(int(budget_state.get("tokens_used", 0)), sum(int(m.get("tokens", 0)) for m in state.get("models_used", [])))
+        cost_used = max(float(budget_state.get("cost_usd", 0.0)), round(sum(float(m.get("cost_usd", 0.0)) for m in state.get("models_used", [])), 6))
 
         existing_ids = set(tasks_map.keys())
         existing_fps = {
@@ -295,7 +274,7 @@ class AnalyticalWorkflow:
         candidate_drafts = [
             pt for raw_res in task_results.values()
             if (res := TaskResult.model_validate(raw_res)).agent == "hypothesis" and res.proposed_tasks
-            for pt in res.proposed_tasks if pt.id not in existing_ids
+            for pt in res.proposed_tasks if pt.id not in existing_ids and pt.fingerprint not in existing_fps
         ]
         if candidate_drafts:
             accepted, _ = self.validator.validate_dynamic_tasks(
@@ -305,13 +284,12 @@ class AnalyticalWorkflow:
                 remaining_query_budget=max(0, plan.budget.max_queries - queries_used),
             )
             for new_task in accepted:
-                tasks_map[new_task.id] = {
+                tasks_map[new_task.id] = updates[new_task.id] = {
                     "task": new_task.model_dump(), "status": TaskStatus.PENDING.value, "attempts": 0,
                     "depends_on": list(new_task.depends_on), "priority": new_task.priority, "agent": new_task.agent,
                 }
-                updates[new_task.id] = tasks_map[new_task.id]
                 plan.tasks.append(new_task)
-                trace_events.append(self._emit_event(run_id, "supervisor", f"Scheduled hypothesis test task '{new_task.id}' ({new_task.agent})", task_id=new_task.id))
+                trace_events.append(self._emit_event(run_id, "supervisor", f"Scheduled hypothesis test task '{new_task.id}'", task_id=new_task.id))
 
         for tid, entry in list(tasks_map.items()):
             if entry["status"] in TERMINAL_STATUSES:
@@ -323,7 +301,7 @@ class AnalyticalWorkflow:
             if failed_deps:
                 entry["status"] = TaskStatus.SKIPPED.value
                 updates[tid] = {"status": TaskStatus.SKIPPED.value, "error": f"Skipped due to upstream failure: {failed_deps}"}
-                trace_events.append(self._emit_event(run_id, "supervisor", f"Skipped task '{tid}' (upstream {failed_deps} unavailable)", "warning", task_id=tid))
+                trace_events.append(self._emit_event(run_id, "supervisor", f"Skipped task '{tid}'", "warning", task_id=tid))
 
         ready_candidates = sorted(
             [
@@ -344,39 +322,39 @@ class AnalyticalWorkflow:
             if budget_exceeded:
                 updates[tid] = {"status": TaskStatus.SKIPPED.value, "error": "Skipped due to token/cost budget exhaustion."}
                 continue
+            if len(dispatched_ids) >= plan.budget.max_parallel_tasks:
+                continue
             if entry.get("agent", "sql") == "sql":
                 if sql_in_wave >= rem_query_budget:
                     updates[tid] = {"status": TaskStatus.SKIPPED.value, "error": f"Skipped: max_queries budget ({plan.budget.max_queries}) reached."}
-                    trace_events.append(self._emit_event(run_id, "budget", f"Task '{tid}' skipped: query budget ({plan.budget.max_queries}) exhausted", "warning", task_id=tid))
+                    trace_events.append(self._emit_event(run_id, "budget", f"Task '{tid}' skipped: query budget exhausted", "warning", task_id=tid))
                     continue
                 if sql_in_wave >= plan.budget.max_parallel_db_queries:
                     continue
                 sql_in_wave += 1
-            if len(dispatched_ids) >= plan.budget.max_parallel_tasks:
-                continue
             updates[tid] = {"status": TaskStatus.RUNNING.value, "attempts": int(entry.get("attempts", 0)) + 1, "started_at": time.time()}
             dispatched_ids.append(tid)
 
         if dispatched_ids:
             trace_events.append(self._emit_event(run_id, "supervisor", f"Dispatching {len(dispatched_ids)} ready task(s) in parallel: {', '.join(dispatched_ids)}"))
-        return {"plan": plan.model_dump(), "tasks": updates, "trace": trace_events}
+        return {
+            "plan": plan.model_dump(), "tasks": updates,
+            "budget_state": {"queries_executed": queries_used, "tokens_used": tokens_used, "cost_usd": cost_used},
+            "trace": trace_events,
+        }
 
     def supervisor_router(self, state: AnalysisState):
-        tasks_map = state.get("tasks", {})
-        plan_dict = state.get("plan", {})
-        sends: list[Send] = []
         worker_map = {"sql": "sql_worker", "hypothesis": "hypothesis_worker", "python": "python_worker"}
-        for entry in tasks_map.values():
-            if entry.get("status") != TaskStatus.RUNNING.value:
-                continue
-            target = worker_map.get(entry.get("agent", "sql"))
-            if target:
-                sends.append(Send(target, {
-                    "run_id": state.get("run_id", ""), "task": entry["task"], "attempt": entry.get("attempts", 1),
-                    "plan": plan_dict, "intent": state.get("intent", {}), "permissions": state.get("permissions", {}),
-                    "schema_context": state.get("schema_context", ""), "task_results": state.get("task_results", {}),
-                    "completed_fingerprints": state.get("completed_fingerprints", {}),
-                }))
+        sends = [
+            Send(target, {
+                "run_id": state.get("run_id", ""), "task": entry["task"], "attempt": entry.get("attempts", 1),
+                "plan": state.get("plan", {}), "intent": state.get("intent", {}), "permissions": state.get("permissions", {}),
+                "schema_context": state.get("schema_context", ""), "task_results": state.get("task_results", {}),
+                "completed_fingerprints": state.get("completed_fingerprints", {}),
+            })
+            for entry in state.get("tasks", {}).values()
+            if entry.get("status") == TaskStatus.RUNNING.value and (target := worker_map.get(entry.get("agent", "sql")))
+        ]
         return sends if sends else "aggregate_evidence"
 
     def sql_worker(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -389,39 +367,35 @@ class AnalyticalWorkflow:
         completed_fps: dict[str, str] = payload.get("completed_fingerprints", {})
         existing_results: dict[str, dict[str, Any]] = payload.get("task_results", {})
 
-        if task.fingerprint and task.fingerprint in completed_fps:
-            prev_tid = completed_fps[task.fingerprint]
-            if prev_tid in existing_results:
-                prev_res = TaskResult.model_validate(existing_results[prev_tid])
-                if prev_res.status == "COMPLETED" and prev_res.dataset:
-                    reused_res = prev_res.model_copy(update={"task_id": task.id, "reused": True})
-                    evt = self._emit_event(run_id, f"sql_{task.id}", f"Reused cached dataset from '{prev_tid}'", task_id=task.id)
-                    return {
-                        "tasks": {task.id: {"status": TaskStatus.COMPLETED.value}},
-                        "task_results": {task.id: reused_res.model_dump()},
-                        "trace": [evt],
-                    }
+        if task.fingerprint and (prev_tid := completed_fps.get(task.fingerprint)) and prev_tid in existing_results:
+            prev_res = TaskResult.model_validate(existing_results[prev_tid])
+            if prev_res.status == "COMPLETED" and prev_res.dataset:
+                return {
+                    "tasks": {task.id: {"status": TaskStatus.COMPLETED.value}},
+                    "task_results": {task.id: prev_res.model_copy(update={"task_id": task.id, "reused": True}).model_dump()},
+                    "trace": [self._emit_event(run_id, f"sql_{task.id}", f"Reused cached dataset from '{prev_tid}'", task_id=task.id)],
+                }
 
         self._emit_event(run_id, f"sql_{task.id}", f"Generating & executing SQL for '{task.title}'...", task_id=task.id)
         models_used: list[dict[str, Any]] = []
 
-        def _complete_sql(sql_str: str, params_dict: dict[str, Any], q_res: dict[str, Any], ds_ref, source: str, repairs: int, steps: list[dict[str, Any]] | None = None, msg_prefix: str = "Fetched") -> dict[str, Any]:
+        def _complete_sql(sql_str: str, params_dict: dict[str, Any], q_res: dict[str, Any], ds_ref, source: str, repairs: int, steps: list[dict[str, Any]] | None = None) -> dict[str, Any]:
             res = TaskResult(
                 task_id=task.id, agent="sql", status="COMPLETED", fingerprint=task.fingerprint,
                 dataset=ds_ref, query_id=q_res["id"], sql=sql_str, params=params_dict,
                 sql_source=source, repair_attempts=repairs, execution_steps=steps or [], duration_ms=q_res["duration_ms"],
             )
-            raw_ev = {
-                "id": task.id, "task_id": task.id, "query_id": q_res["id"], "purpose": task.purpose,
-                "columns": q_res["columns"], "rows": q_res["rows"], "sql": sql_str,
-                "duration_ms": q_res["duration_ms"], "dataset_id": ds_ref.dataset_id,
-            }
-            evt = self._emit_event(run_id, f"exec_{task.id}", f"{msg_prefix} {len(q_res['rows'])} rows in {q_res['duration_ms']} ms", task_id=task.id)
             return {
                 "tasks": {task.id: {"status": TaskStatus.COMPLETED.value, "duration_ms": q_res["duration_ms"]}},
                 "task_results": {task.id: res.model_dump()},
                 "completed_fingerprints": {task.fingerprint: task.id} if task.fingerprint else {},
-                "raw_evidence": [raw_ev], "models_used": models_used, "trace": [evt],
+                "raw_evidence": [{
+                    "id": task.id, "task_id": task.id, "query_id": q_res["id"], "purpose": task.purpose,
+                    "columns": q_res["columns"], "rows": q_res["rows"], "sql": sql_str,
+                    "duration_ms": q_res["duration_ms"], "dataset_id": ds_ref.dataset_id,
+                }],
+                "models_used": models_used,
+                "trace": [self._emit_event(run_id, f"exec_{task.id}", f"Fetched {len(q_res['rows'])} rows in {q_res['duration_ms']} ms", task_id=task.id)],
             }
 
         try:
@@ -433,7 +407,7 @@ class AnalyticalWorkflow:
                         allowed_tables=allowed_tables, run_id=run_id, on_event=self._event_listeners.get(run_id),
                     )
                     models_used.extend(u.model_dump() for u in sql_usages)
-                    return _complete_sql(final_sql, final_params, q_res, ds_ref, "autonomous_research", repair_count, sql_steps, "Autonomous SQL explored and fetched")
+                    return _complete_sql(final_sql, final_params, q_res, ds_ref, "autonomous_research", repair_count, sql_steps)
 
                 sql, params, sql_source, draft_usage = self.sql_analyst.draft_for_task(
                     task=task, period_key=plan.period_key, plan_filters=plan.filters, schema_context=schema_ctx,
@@ -450,10 +424,9 @@ class AnalyticalWorkflow:
                         return _complete_sql(sql, params, q_res, ds_ref, sql_source, repair_count)
                     except QuerySecurityError as sec_err:
                         err_msg = str(sec_err)
-                        repairable = any(tok in err_msg.lower() for tok in ("syntax", "unknown column", "select *", "parsing failed", "database query error", "rejected query", "only select", "exceeded maximum row limit", "statement separators"))
+                        repairable = any(tok in err_msg.lower() for tok in ("syntax", "unknown column", "select *", "parsing failed", "database query error", "rejected query", "only select", "Only single SELECT", "exceeded maximum row limit", "statement separators"))
                         if attempt < max_retries and repairable:
                             repair_count += 1
-                            logger.warning("Attempting SQL repair (%d/%d) for %s: %s", repair_count, max_retries, task.id, err_msg)
                             sql, rep_usage = self.sql_analyst.repair(
                                 rejected_sql=sql, error_message=err_msg, task=task, intent=intent,
                                 schema_context=schema_ctx, available_params=list(params.keys()),
@@ -486,21 +459,23 @@ class AnalyticalWorkflow:
                 hyp_records, proposed_drafts, usage_item = self.hypothesis_agent.generate(
                     task=task, plan=plan, upstream_summaries=upstream_summaries, existing_task_ids=existing_ids,
                 )
+            sql_done = sum(1 for r in task_results.values() if r.get("agent") == "sql" and r.get("status") == "COMPLETED" and not r.get("reused"))
             accepted_proposed, _ = self.validator.validate_dynamic_tasks(
-                existing_plan=plan, existing_fingerprints={t.fingerprint for t in plan.tasks},
+                existing_plan=plan,
+                existing_fingerprints={t.fingerprint for t in plan.tasks} | set(payload.get("completed_fingerprints", {}).keys()),
                 existing_task_ids=set(existing_ids), candidate_drafts=proposed_drafts,
-                origin="hypothesis", round_num=0, remaining_query_budget=2,
+                origin="hypothesis", round_num=0, remaining_query_budget=max(0, plan.budget.max_queries - sql_done),
             )
             res = TaskResult(
                 task_id=task.id, agent="hypothesis", status="COMPLETED", fingerprint=task.fingerprint,
                 hypotheses=hyp_records, proposed_tasks=accepted_proposed, duration_ms=usage_item.duration_ms,
             )
-            evt = self._emit_event(run_id, f"hypothesis_{task.id}", f"Generated {len(hyp_records)} testable hypotheses ({len(accepted_proposed)} additional test tasks)", task_id=task.id)
             return {
                 "tasks": {task.id: {"status": TaskStatus.COMPLETED.value, "duration_ms": usage_item.duration_ms}},
                 "task_results": {task.id: res.model_dump()},
                 "hypotheses": [h.model_dump() for h in hyp_records],
-                "models_used": [usage_item.model_dump()], "trace": [evt],
+                "models_used": [usage_item.model_dump()],
+                "trace": [self._emit_event(run_id, f"hypothesis_{task.id}", f"Generated {len(hyp_records)} testable hypotheses", task_id=task.id)],
             }
         except (ProviderAuthError, ProviderRateLimitError):
             raise
@@ -520,17 +495,21 @@ class AnalyticalWorkflow:
             if ut in task_results and (dep_res := TaskResult.model_validate(task_results[ut])).dataset
         ]
         is_auto = self.python_agent.should_use_autonomous_mode(task)
-        self._emit_event(run_id, f"python_{task.id}", f"Running {'autonomous Python research' if is_auto else 'deterministic Python analysis'} ({task.title})...", task_id=task.id)
+        self._emit_event(run_id, f"python_{task.id}", f"Running Python analysis ({task.title})...", task_id=task.id)
         try:
             if is_auto:
+                broker_usages: list[dict[str, Any]] = []
+
                 def _sql_provider(req_text: str) -> tuple[str, dict[str, Any]]:
                     helper_task = AnalysisTask(
                         id=f"{task.id}_data_req", title=req_text[:80], agent="sql", purpose=req_text,
-                        query_spec=QuerySpec(metric=(plan.metrics[0] if plan.metrics else "gross_revenue"), mode="custom", custom_request=req_text),
+                        query_spec=QuerySpec(metric=(plan.metrics[0] if plan.metrics else "gross_revenue"), mode="custom", custom_request=req_text),  # type: ignore[arg-type]
                     )
-                    sql, params, _, _ = self.sql_analyst.draft_for_task(
+                    sql, params, _, u_item = self.sql_analyst.draft_for_task(
                         task=helper_task, period_key=plan.period_key, plan_filters=plan.filters, schema_context=schema_ctx,
                     )
+                    if u_item:
+                        broker_usages.append(u_item.model_dump())
                     return sql, params
 
                 with trace_span("worker.python.autonomous", run_id=run_id, task_id=task.id):
@@ -538,30 +517,30 @@ class AnalyticalWorkflow:
                         task=task, upstream_dataset_ids=dataset_ids, run_id=run_id or "run_py",
                         sql_provider=_sql_provider, on_event=self._event_listeners.get(run_id),
                     )
-                duration_ms = sum(int(s.get("duration_ms", 0)) for s in inv.execution_steps) or 1
                 if inv.status == "FAILED":
                     raise RuntimeError(inv.error or "Autonomous Python investigation failed.")
+                duration_ms = sum(int(s.get("duration_ms", 0)) for s in inv.execution_steps) or 1
                 res = TaskResult(
                     task_id=task.id, agent="python", status="COMPLETED", fingerprint=task.fingerprint,
                     tool=inv.tool_name, calculation=inv.calculation, generated_code=inv.generated_code,
                     methodology=inv.methodology, execution_steps=inv.execution_steps, artifacts=inv.artifacts,
                     assumptions_checked=inv.assumptions_checked, repair_attempts=inv.repair_attempts, duration_ms=duration_ms,
                 )
-                evt = self._emit_event(run_id, f"python_{task.id}", f"Completed autonomous Python ({inv.methodology}) in {len(inv.execution_steps)} step(s)", task_id=task.id)
                 return {
                     "tasks": {task.id: {"status": TaskStatus.COMPLETED.value, "duration_ms": duration_ms}},
                     "task_results": {task.id: res.model_dump()},
-                    "models_used": [u.model_dump() for u in inv.usages], "trace": [evt],
+                    "models_used": [u.model_dump() for u in inv.usages] + broker_usages,
+                    "trace": [self._emit_event(run_id, f"python_{task.id}", f"Completed autonomous Python ({inv.methodology})", task_id=task.id)],
                 }
 
             with trace_span("worker.python", run_id=run_id, task_id=task.id):
                 tool_name, calc_dict, usage_item, duration_ms = self.python_agent.execute(task=task, upstream_dataset_ids=dataset_ids)
             res = TaskResult(task_id=task.id, agent="python", status="COMPLETED", fingerprint=task.fingerprint, tool=tool_name, calculation=calc_dict, duration_ms=duration_ms)
-            evt = self._emit_event(run_id, f"python_{task.id}", f"Completed Python tool '{tool_name}' in {duration_ms} ms", task_id=task.id)
             return {
                 "tasks": {task.id: {"status": TaskStatus.COMPLETED.value, "duration_ms": duration_ms}},
                 "task_results": {task.id: res.model_dump()},
-                "models_used": [usage_item.model_dump()] if usage_item else [], "trace": [evt],
+                "models_used": [usage_item.model_dump()] if usage_item else [],
+                "trace": [self._emit_event(run_id, f"python_{task.id}", f"Completed Python tool '{tool_name}' in {duration_ms} ms", task_id=task.id)],
             }
         except Exception as exc:
             return self._task_failure(run_id, task, "python", f"{type(exc).__name__}: {exc}", stage=f"python_{task.id}")
@@ -575,12 +554,11 @@ class AnalyticalWorkflow:
         sql_completed = sum(1 for r in task_results.values() if r.get("agent") == "sql" and r.get("status") == "COMPLETED" and not r.get("reused"))
         total_tokens = sum(int(m.get("tokens", 0)) for m in state.get("models_used", []))
         total_cost = round(sum(float(m.get("cost_usd", 0.0)) for m in state.get("models_used", [])), 6)
-        evt = self._emit_event(run_id, "aggregate_evidence", f"Aggregated {len(ev_records)} evidence records ({sql_completed} SQL queries, {len(eval_hyps)} evaluated hypotheses)")
         return {
             "evidence_records": [e.model_dump() for e in ev_records],
             "hypotheses": [h.model_dump() for h in eval_hyps],
             "budget_state": {"queries_executed": sql_completed, "tokens_used": total_tokens, "cost_usd": total_cost},
-            "trace": [evt],
+            "trace": [self._emit_event(run_id, "aggregate_evidence", f"Aggregated {len(ev_records)} evidence records")],
         }
 
     def review_evidence_node(self, state: AnalysisState) -> dict[str, Any]:
@@ -598,8 +576,11 @@ class AnalyticalWorkflow:
                 task_errors=state.get("errors", []), refinement_round=refinement_round,
                 budget_state=state.get("budget_state", {}),
             )
-        evt = self._emit_event(run_id, "evidence_review", f"Evidence Reviewer decision: {review.decision} (sufficient={review.sufficient})")
-        return {"evidence_review": review.model_dump(), "models_used": [usage_item.model_dump()] if usage_item else [], "trace": [evt]}
+        return {
+            "evidence_review": review.model_dump(),
+            "models_used": [usage_item.model_dump()] if usage_item else [],
+            "trace": [self._emit_event(run_id, "evidence_review", f"Evidence Reviewer decision: {review.decision}")],
+        }
 
     def review_router(self, state: AnalysisState) -> str:
         review = state.get("evidence_review", {})
@@ -630,11 +611,10 @@ class AnalyticalWorkflow:
                 "depends_on": list(t.depends_on), "priority": t.priority, "agent": t.agent,
             }
         plan.version += 1
-        evt = self._emit_event(run_id, "refinement_planner", f"Refinement round {next_round}: added {len(accepted)} targeted task(s): {[t.id for t in accepted]}")
         return {
             "plan": plan.model_dump(), "tasks": new_task_entries, "refinement_round": next_round,
             "refinement_history": [{"round": next_round, "added_tasks": [t.id for t in accepted], "warnings": warnings, "requests": [r.model_dump() for r in review.refinement_requests]}],
-            "trace": [evt],
+            "trace": [self._emit_event(run_id, "refinement_planner", f"Refinement round {next_round}: added {len(accepted)} task(s)")],
         }
 
     def insight_agent_node(self, state: AnalysisState) -> dict[str, Any]:
@@ -654,7 +634,11 @@ class AnalyticalWorkflow:
                 "repair_attempts": res.get("repair_attempts", 0),
                 "verification_status": (
                     "reproduced" if "[verification=reproduced]" in str(ev_status_by_task.get(tid, ""))
-                    else ("warning" if "[verification=mismatch]" in str(ev_status_by_task.get(tid, "")) else res.get("verification_status", ""))
+                    else (
+                        "warning"
+                        if any(tag in str(ev_status_by_task.get(tid, "")) for tag in ("[verification=mismatch]", "[verification=execution_failed]", "[verification=no_code]"))
+                        else res.get("verification_status", "")
+                    )
                 ),
                 "calculation": res.get("calculation"), "duration_ms": res.get("duration_ms", 0),
             }
@@ -673,26 +657,21 @@ class AnalyticalWorkflow:
                 models_used=models_used_items, python_analyses=python_analyses,
                 evaluated_hypotheses=hypotheses_records, output_mode=plan.output.format,
             )
-        new_models = [m.model_dump() for m in report.models_used[before_count:]]
-        evt = self._emit_event(run_id, "synthesize", f"Insight Agent synthesized {len(report.findings)} verified findings")
         return {
             "report": report.model_dump(), "direct_answer": report.summary,
-            "final_output_mode": plan.output.format, "models_used": new_models, "trace": [evt],
+            "final_output_mode": plan.output.format,
+            "models_used": [m.model_dump() for m in report.models_used[before_count:]],
+            "trace": [self._emit_event(run_id, "synthesize", f"Insight Agent synthesized {len(report.findings)} verified findings")],
         }
-
-    def output_requirements_node(self, state: AnalysisState) -> dict[str, Any]:
-        run_id = state.get("run_id", "")
-        mode = AnalysisPlan.model_validate(state["plan"]).output.format
-        return {"final_output_mode": mode, "trace": [self._emit_event(run_id, "output_requirements", f"Routing to output pipelines for format='{mode}'")]}
 
     def output_router(self, state: AnalysisState) -> list[str]:
         plan = AnalysisPlan.model_validate(state["plan"])
-        targets = ["direct_answer_node"]
+        targets: list[str] = []
         if plan.output.format in ("answer_with_visuals", "business_report") or state.get("report", {}).get("charts"):
             targets.append("chart_renderer")
         if plan.output.format == "business_report":
             targets.append("report_agent")
-        return targets
+        return targets or ["final_quality_gate"]
 
     def chart_renderer_node(self, state: AnalysisState) -> dict[str, Any]:
         run_id = state.get("run_id", "")
@@ -712,12 +691,11 @@ class AnalyticalWorkflow:
         self._emit_event(run_id, "report_agent", "Generating comprehensive BusinessReport...")
         with trace_span("node.report_agent", run_id=run_id):
             biz_report, usage_item = self.report_agent.generate_business_report(plan=plan, base_report=base_report, evidence_records=ev_records)
-        evt = self._emit_event(run_id, "report_agent", f"Generated BusinessReport with {len(biz_report.sections)} sections")
-        return {"business_report": biz_report.model_dump(), "models_used": [usage_item.model_dump()] if usage_item else [], "trace": [evt]}
-
-    def direct_answer_node(self, state: AnalysisState) -> dict[str, Any]:
-        run_id = state.get("run_id", "")
-        return {"direct_answer": state.get("report", {}).get("summary", ""), "trace": [self._emit_event(run_id, "direct_answer", "Verified concise executive answer")]}
+        return {
+            "business_report": biz_report.model_dump(),
+            "models_used": [usage_item.model_dump()] if usage_item else [],
+            "trace": [self._emit_event(run_id, "report_agent", f"Generated BusinessReport with {len(biz_report.sections)} sections")],
+        }
 
     def final_quality_gate_node(self, state: AnalysisState) -> dict[str, Any]:
         run_id = state.get("run_id", "")
@@ -727,7 +705,7 @@ class AnalyticalWorkflow:
         biz_report = state.get("business_report")
         stop_reason = state.get("stop_reason", "")
 
-        task_graph_summary = [
+        report_dict["task_graph"] = [
             {
                 "id": tid, "title": entry.get("task", {}).get("title", tid),
                 "agent": entry.get("agent", "sql"), "status": entry.get("status", "COMPLETED"),
@@ -738,12 +716,23 @@ class AnalyticalWorkflow:
             }
             for tid, entry in tasks_map.items()
         ]
-        report_dict["task_graph"] = task_graph_summary
         report_dict["evidence_review"] = review
+        if state.get("charts"):
+            report_dict["charts"] = state["charts"]
         if biz_report:
             report_dict["business_report"] = biz_report
             if biz_report.get("executive_summary"):
-                report_dict["summary"] = biz_report["executive_summary"]
+                allowed_nums: set[float] = set()
+                for k in report_dict.get("kpis", []):
+                    if isinstance(k.get("value"), (int, float)):
+                        allowed_nums.update((round(float(k["value"]), 2), abs(round(float(k["value"]), 2))))
+                for tbl in report_dict.get("tables", []):
+                    for r in (tbl.get("rows") or [])[:50]:
+                        for v in r.values():
+                            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                                allowed_nums.update((round(float(v), 2), abs(round(float(v), 2))))
+                if not verify_narrative_numbers(biz_report["executive_summary"], allowed_nums):
+                    report_dict["summary"] = biz_report["executive_summary"]
             if biz_report.get("recommendations"):
                 report_dict["recommendations"] = biz_report["recommendations"]
             if biz_report.get("limitations"):
@@ -759,29 +748,9 @@ class AnalyticalWorkflow:
                 lims.append("Analysis scope was bounded by the configured query execution budget.")
             report_dict["limitations"] = lims
 
-        evt = self._emit_event(run_id, "quality_gate", f"Final Quality Gate passed (status={report_dict.get('status')}, tasks={len(task_graph_summary)})")
+        evt = self._emit_event(run_id, "quality_gate", f"Final Quality Gate passed (status={report_dict.get('status')})")
         report_dict["trace"] = list(state.get("trace", [])) + [evt]
         return {"report": report_dict, "trace": [evt]}
-
-    def execute_measurements(self, state: AnalysisState) -> dict[str, Any]:
-        """Legacy helper preserved for direct node unit tests."""
-        tasks = [PlanTask.model_validate(t) for t in state.get("tasks", [])] if isinstance(state.get("tasks"), list) else []
-        intent = QuestionIntent.model_validate(state["intent"])
-        schema_ctx = state["schema_context"]
-        results, errors, new_models, trace_events = [], [], [], []
-        for task in tasks:
-            sql, params, usage = self.sql_analyst.draft(task, intent, schema_ctx)
-            new_models.append(usage.model_dump())
-            try:
-                qres = self.gateway.execute(sql, params, trusted_template=False)
-                results.append({
-                    "task_id": task.id, "query_id": qres["id"], "purpose": task.purpose,
-                    "columns": qres["columns"], "rows": qres["rows"], "sql": sql, "duration_ms": qres["duration_ms"],
-                })
-                trace_events.append(self._event(f"exec_{task.kind}", f"Fetched {len(qres['rows'])} rows"))
-            except Exception as exc:
-                errors.append({"task": task.kind, "error": str(exc)})
-        return {"raw_evidence": results, "errors": errors, "models_used": new_models, "trace": trace_events}
 
     def _build_graph(self):
         builder = StateGraph(AnalysisState)
@@ -793,8 +762,7 @@ class AnalyticalWorkflow:
             ("hypothesis_worker", self.hypothesis_worker), ("python_worker", self.python_worker),
             ("aggregate_evidence", self.aggregate_evidence_node), ("review_evidence", self.review_evidence_node),
             ("refinement_planner", self.refinement_planner_node), ("insight_agent", self.insight_agent_node),
-            ("output_requirements", self.output_requirements_node), ("chart_renderer", self.chart_renderer_node),
-            ("report_agent", self.report_agent_node), ("direct_answer_node", self.direct_answer_node),
+            ("chart_renderer", self.chart_renderer_node), ("report_agent", self.report_agent_node),
             ("final_quality_gate", self.final_quality_gate_node),
         ):
             builder.add_node(name, fn)
@@ -825,27 +793,25 @@ class AnalyticalWorkflow:
         builder.add_edge("aggregate_evidence", "review_evidence")
         builder.add_conditional_edges("review_evidence", self.review_router, {"refinement_planner": "refinement_planner", "insight_agent": "insight_agent"})
         builder.add_edge("refinement_planner", "supervisor")
-        builder.add_edge("insight_agent", "output_requirements")
-        builder.add_conditional_edges("output_requirements", self.output_router, ["chart_renderer", "report_agent", "direct_answer_node"])
+        builder.add_conditional_edges("insight_agent", self.output_router, ["chart_renderer", "report_agent", "final_quality_gate"])
         builder.add_edge("chart_renderer", "final_quality_gate")
         builder.add_edge("report_agent", "final_quality_gate")
-        builder.add_edge("direct_answer_node", "final_quality_gate")
         builder.add_edge("final_quality_gate", END)
         return builder.compile(checkpointer=self.checkpointer)
 
     def get_checkpoint_history(self, thread_id: str) -> list[dict[str, Any]]:
         cfg = {"configurable": {"thread_id": thread_id}}
-        history = []
         try:
-            for snap in self.graph.get_state_history(cfg):
-                history.append({
+            return [
+                {
                     "checkpoint_id": snap.config.get("configurable", {}).get("checkpoint_id"),
                     "next": list(snap.next), "created_at": snap.created_at,
                     "step": snap.metadata.get("step") if snap.metadata else None,
-                })
-        except Exception as exc:
-            logger.debug("Could not read checkpoint history for %s: %s", thread_id, exc)
-        return history
+                }
+                for snap in self.graph.get_state_history(cfg)
+            ]
+        except Exception:
+            return []
 
     def run(
         self, question: str, previous_context: dict[str, Any] | None = None,

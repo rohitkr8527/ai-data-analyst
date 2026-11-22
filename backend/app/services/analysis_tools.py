@@ -31,13 +31,14 @@ def _pick_value_col(df: pd.DataFrame, preferred: str | None = None) -> str:
     for col in NUMERIC_CANDIDATE_COLS:
         if col in df.columns:
             return col
-    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    if num_cols:
+    if num_cols := df.select_dtypes(include=[np.number]).columns.tolist():
         return num_cols[-1]
     raise AnalysisToolError(f"Dataset has no numeric column for analysis (columns={list(df.columns)}).")
 
 
 def _pick_label_col(df: pd.DataFrame, preferred: str | None = None) -> str:
+    if len(df.columns) == 0:
+        raise AnalysisToolError("Dataset has no columns.")
     if preferred and preferred in df.columns:
         return preferred
     for col in LABEL_CANDIDATE_COLS:
@@ -48,7 +49,7 @@ def _pick_label_col(df: pd.DataFrame, preferred: str | None = None) -> str:
 
 
 def tool_period_comparison(datasets: list[pd.DataFrame], params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Compute period-over-period absolute and percentage changes across entities or totals."""
+    """Compute period-over-period absolute and percentage changes."""
     params = params or {}
     if not datasets or datasets[0].empty:
         return {"tool": "period_comparison", "status": "empty", "records": [], "summary": {}}
@@ -58,25 +59,23 @@ def tool_period_comparison(datasets: list[pd.DataFrame], params: dict[str, Any] 
         row = df.iloc[0]
         prev_rev, curr_rev = _clean_float(row.get("previous_revenue")), _clean_float(row.get("current_revenue"))
         delta_rev = round(curr_rev - prev_rev, 2)
-        pct_rev = round(((curr_rev - prev_rev) / abs(prev_rev)) * 100.0, 2) if abs(prev_rev) > 1e-6 else None
+        pct_rev = round((delta_rev / abs(prev_rev)) * 100.0, 2) if abs(prev_rev) > 1e-6 else None
         return {
             "tool": "period_comparison", "status": "ok", "mode": "scalar_baseline",
             "summary": {"previous": prev_rev, "current": curr_rev, "delta": delta_rev, "pct_change": pct_rev},
             "records": [{"label": "Total", "previous": prev_rev, "current": curr_rev, "change": delta_rev, "pct_change": pct_rev}],
         }
 
+    lbl_col = _pick_label_col(df, params.get("label_column"))
     if not {"previous", "current"}.issubset(df.columns):
         val_col = _pick_value_col(df, params.get("value_column"))
-        lbl_col = _pick_label_col(df, params.get("label_column"))
         df["value_num"] = pd.to_numeric(df[val_col], errors="coerce").fillna(0.0)
-        total = _clean_float(df["value_num"].sum())
         return {
             "tool": "period_comparison", "status": "ok", "mode": "single_period_fallback",
-            "summary": {"total": round(total, 2), "row_count": int(len(df))},
+            "summary": {"total": round(_clean_float(df["value_num"].sum()), 2), "row_count": int(len(df))},
             "records": [{"label": str(r[lbl_col]), "current": round(_clean_float(r["value_num"]), 2)} for _, r in df.head(20).iterrows()],
         }
 
-    lbl_col = _pick_label_col(df, params.get("label_column"))
     df["previous"] = pd.to_numeric(df["previous"], errors="coerce").fillna(0.0)
     df["current"] = pd.to_numeric(df["current"], errors="coerce").fillna(0.0)
     df["change"] = (df["current"] - df["previous"]).round(2)
@@ -118,36 +117,32 @@ def tool_revenue_decomposition(datasets: list[pd.DataFrame], params: dict[str, A
     prev_orders, curr_orders = int(_clean_float(row.get("previous_orders", 0))), int(_clean_float(row.get("current_orders", 0)))
 
     delta_rev = round(curr_rev - prev_rev, 2)
-    pct_rev = round((delta_rev / abs(prev_rev)) * 100.0, 2) if abs(prev_rev) > 1e-6 else None
     delta_orders = curr_orders - prev_orders
-    pct_orders = round((delta_orders / abs(prev_orders)) * 100.0, 2) if prev_orders > 0 else None
-
     prev_aov = (prev_rev / prev_orders) if prev_orders > 0 else 0.0
     curr_aov = (curr_rev / curr_orders) if curr_orders > 0 else 0.0
     delta_aov = curr_aov - prev_aov
-    pct_aov = round((delta_aov / abs(prev_aov)) * 100.0, 2) if abs(prev_aov) > 1e-6 else None
 
     volume_effect = round(delta_orders * prev_aov, 2)
     aov_effect = round(delta_aov * prev_orders, 2)
     interaction_effect = round(delta_orders * delta_aov, 2)
     residual = round(delta_rev - round(volume_effect + aov_effect + interaction_effect, 2), 2)
 
-    vol_share = round((volume_effect / delta_rev) * 100.0, 2) if abs(delta_rev) > 1e-6 else 0.0
-    aov_share = round((aov_effect / delta_rev) * 100.0, 2) if abs(delta_rev) > 1e-6 else 0.0
-    inter_share = round((interaction_effect / delta_rev) * 100.0, 2) if abs(delta_rev) > 1e-6 else 0.0
-
     return {
         "tool": "revenue_decomposition", "status": "ok",
         "summary": {
             "previous_revenue": round(prev_rev, 2), "current_revenue": round(curr_rev, 2),
-            "net_revenue_change": delta_rev, "net_revenue_pct_change": pct_rev,
+            "net_revenue_change": delta_rev,
+            "net_revenue_pct_change": round((delta_rev / abs(prev_rev)) * 100.0, 2) if abs(prev_rev) > 1e-6 else None,
             "previous_orders": prev_orders, "current_orders": curr_orders,
-            "order_volume_change": delta_orders, "order_volume_pct_change": pct_orders,
+            "order_volume_change": delta_orders,
+            "order_volume_pct_change": round((delta_orders / abs(prev_orders)) * 100.0, 2) if prev_orders > 0 else None,
             "previous_aov": round(prev_aov, 2), "current_aov": round(curr_aov, 2),
-            "aov_change": round(delta_aov, 2), "aov_pct_change": pct_aov,
-            "volume_effect_usd": volume_effect, "aov_effect_usd": aov_effect,
-            "interaction_effect_usd": interaction_effect, "volume_share_of_change_pct": vol_share,
-            "aov_share_of_change_pct": aov_share, "interaction_share_of_change_pct": inter_share,
+            "aov_change": round(delta_aov, 2),
+            "aov_pct_change": round((delta_aov / abs(prev_aov)) * 100.0, 2) if abs(prev_aov) > 1e-6 else None,
+            "volume_effect_usd": volume_effect, "aov_effect_usd": aov_effect, "interaction_effect_usd": interaction_effect,
+            "volume_share_of_change_pct": round((volume_effect / delta_rev) * 100.0, 2) if abs(delta_rev) > 1e-6 else 0.0,
+            "aov_share_of_change_pct": round((aov_effect / delta_rev) * 100.0, 2) if abs(delta_rev) > 1e-6 else 0.0,
+            "interaction_share_of_change_pct": round((interaction_effect / delta_rev) * 100.0, 2) if abs(delta_rev) > 1e-6 else 0.0,
             "reconciled": abs(residual) <= 1.0, "reconciliation_residual_usd": residual,
             "primary_driver": "order_volume" if abs(volume_effect) >= abs(aov_effect) else "average_order_value",
         },
@@ -174,28 +169,28 @@ def tool_contribution_analysis(datasets: list[pd.DataFrame], params: dict[str, A
         sum_changes = round(_clean_float(df["change"].sum()), 2)
         denom = baseline_delta if (baseline_delta is not None and abs(baseline_delta) > 1e-6) else sum_changes
 
-        records = []
-        for _, r in df.sort_values("change", ascending=True).iterrows():
-            chg, prev_v, curr_v = round(_clean_float(r["change"]), 2), round(_clean_float(r["previous"]), 2), round(_clean_float(r["current"]), 2)
-            records.append({
-                "label": str(r[lbl_col]), "previous": prev_v, "current": curr_v, "change": chg,
-                "pct_change": round(((curr_v - prev_v) / abs(prev_v)) * 100.0, 2) if abs(prev_v) > 1e-6 else None,
+        records = [
+            {
+                "label": str(r[lbl_col]), "previous": (pv := round(_clean_float(r["previous"]), 2)),
+                "current": (cv := round(_clean_float(r["current"]), 2)), "change": (chg := round(_clean_float(r["change"]), 2)),
+                "pct_change": round(((cv - pv) / abs(pv)) * 100.0, 2) if abs(pv) > 1e-6 else None,
                 "share_of_net_change_pct": round((chg / denom) * 100.0, 2) if abs(denom) > 1e-6 else 0.0,
-            })
-
+            }
+            for _, r in df.sort_values("change", ascending=True).iterrows()
+        ]
         discrepancy = round(sum_changes - baseline_delta, 2) if baseline_delta is not None else 0.0
-        is_reconciled = abs(discrepancy) <= 1.0 if baseline_delta is not None else True
         top_neg, top_pos = (records[0] if records else None), (records[-1] if records else None)
+        primary, offset = (top_pos, top_neg) if denom > 0 else (top_neg, top_pos)
         return {
             "tool": "contribution_analysis", "status": "ok",
             "summary": {
                 "sum_of_changes": sum_changes, "baseline_net_change": baseline_delta,
-                "discrepancy": discrepancy, "reconciled": is_reconciled,
-                "primary_contributor_label": top_neg["label"] if top_neg else None,
-                "primary_contributor_change": top_neg["change"] if top_neg else 0.0,
-                "primary_contributor_share_pct": top_neg["share_of_net_change_pct"] if top_neg else 0.0,
-                "largest_positive_offset_label": top_pos["label"] if top_pos else None,
-                "largest_positive_offset_change": top_pos["change"] if top_pos else 0.0,
+                "discrepancy": discrepancy, "reconciled": abs(discrepancy) <= 1.0 if baseline_delta is not None else True,
+                "primary_contributor_label": primary["label"] if primary else None,
+                "primary_contributor_change": primary["change"] if primary else 0.0,
+                "primary_contributor_share_pct": primary["share_of_net_change_pct"] if primary else 0.0,
+                "largest_positive_offset_label": offset["label"] if offset else None,
+                "largest_positive_offset_change": offset["change"] if offset else 0.0,
             },
             "records": records,
         }
@@ -230,42 +225,42 @@ def tool_statistical_summary(datasets: list[pd.DataFrame], params: dict[str, Any
         return {"tool": "statistical_summary", "status": "empty", "summary": {}}
     arr = series.to_numpy(dtype=float)
     q25, q50, q75 = np.percentile(arr, [25, 50, 75])
-    skew_val = float(stats.skew(arr)) if len(arr) >= 3 else 0.0
     return {
         "tool": "statistical_summary", "status": "ok", "column": val_col,
         "summary": {
             "count": int(len(arr)), "sum": round(_clean_float(arr.sum()), 2), "mean": round(_clean_float(arr.mean()), 2),
             "std": round(_clean_float(arr.std(ddof=1) if len(arr) > 1 else 0.0), 2), "min": round(_clean_float(arr.min()), 2),
             "q25": round(_clean_float(q25), 2), "median": round(_clean_float(q50), 2), "q75": round(_clean_float(q75), 2),
-            "iqr": round(_clean_float(q75 - q25), 2), "max": round(_clean_float(arr.max()), 2), "skewness": round(_clean_float(skew_val), 3),
+            "iqr": round(_clean_float(q75 - q25), 2), "max": round(_clean_float(arr.max()), 2),
+            "skewness": round(_clean_float(float(stats.skew(arr)) if len(arr) >= 3 else 0.0), 3),
         },
     }
 
 
 def tool_trend_analysis(datasets: list[pd.DataFrame], params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Perform linear trend regression, MoM change computation, and peak/trough detection."""
+    """Perform linear trend regression and peak/trough detection."""
     params = params or {}
     if not datasets or datasets[0].empty:
         return {"tool": "trend_analysis", "status": "empty", "summary": {}}
     df = datasets[0].copy()
     lbl_col = _pick_label_col(df, params.get("time_column") or params.get("label_column"))
     val_col = _pick_value_col(df, params.get("value_column"))
-    df["val"] = pd.to_numeric(df[val_col], errors="coerce").fillna(0.0)
-    n, y = len(df), df["val"].to_numpy(dtype=float)
-    x = np.arange(n, dtype=float)
+    y = pd.to_numeric(df[val_col], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    n = len(y)
     if n >= 2 and np.std(y) > 1e-9:
-        reg = stats.linregress(x, y)
+        reg = stats.linregress(np.arange(n, dtype=float), y)
         slope, r_squared, p_value = _clean_float(reg.slope), _clean_float(reg.rvalue ** 2), _clean_float(reg.pvalue)
     else:
         slope, r_squared, p_value = 0.0, 0.0, 1.0
     max_idx, min_idx = int(np.argmax(y)), int(np.argmin(y))
-    direction = "upward" if slope > 0 and p_value < 0.1 else ("downward" if slope < 0 and p_value < 0.1 else "seasonal_or_flat")
     return {
         "tool": "trend_analysis", "status": "ok",
         "summary": {
             "periods": n, "slope_per_period": round(slope, 2), "r_squared": round(r_squared, 4), "p_value": round(p_value, 4),
-            "trend_direction": direction, "peak_period": str(df.iloc[max_idx][lbl_col]), "peak_value": round(_clean_float(y[max_idx]), 2),
-            "trough_period": str(df.iloc[min_idx][lbl_col]), "trough_value": round(_clean_float(y[min_idx]), 2), "mean_value": round(_clean_float(y.mean()), 2),
+            "trend_direction": "upward" if slope > 0 and p_value < 0.1 else ("downward" if slope < 0 and p_value < 0.1 else "seasonal_or_flat"),
+            "peak_period": str(df.iloc[max_idx][lbl_col]), "peak_value": round(_clean_float(y[max_idx]), 2),
+            "trough_period": str(df.iloc[min_idx][lbl_col]), "trough_value": round(_clean_float(y[min_idx]), 2),
+            "mean_value": round(_clean_float(y.mean()), 2),
         },
     }
 
@@ -279,18 +274,16 @@ def tool_anomaly_detection(datasets: list[pd.DataFrame], params: dict[str, Any] 
     lbl_col, val_col = _pick_label_col(df, params.get("label_column")), _pick_value_col(df, params.get("value_column"))
     df["val"] = pd.to_numeric(df[val_col], errors="coerce").fillna(0.0)
     arr, threshold = df["val"].to_numpy(dtype=float), float(params.get("threshold") or 2.0)
-    mean = float(np.mean(arr)) if len(arr) else 0.0
-    std = float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0
+    mean, std = (float(np.mean(arr)) if len(arr) else 0.0), (float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0)
     q25, q75 = np.percentile(arr, [25, 75]) if len(arr) >= 4 else (mean, mean)
-    iqr = float(q75 - q25)
-    lower_fence, upper_fence = q25 - 1.5 * iqr, q75 + 1.5 * iqr
+    lower_fence, upper_fence = q25 - 1.5 * float(q75 - q25), q75 + 1.5 * float(q75 - q25)
 
-    anomalies = []
-    for _, row in df.iterrows():
-        v = float(row["val"])
-        z = ((v - mean) / std) if std > 1e-6 else 0.0
-        if abs(z) >= threshold or (len(arr) >= 4 and (v < lower_fence or v > upper_fence)):
-            anomalies.append({"label": str(row[lbl_col]), "value": round(v, 2), "z_score": round(_clean_float(z), 2), "direction": "high" if v >= mean else "low"})
+    anomalies = [
+        {"label": str(row[lbl_col]), "value": round((v := float(row["val"])), 2), "z_score": round(_clean_float(z), 2), "direction": "high" if v >= mean else "low"}
+        for _, row in df.iterrows()
+        if abs(z := (((float(row["val"]) - mean) / std) if std > 1e-6 else 0.0)) >= threshold
+        or (len(arr) >= 4 and (float(row["val"]) < lower_fence or float(row["val"]) > upper_fence))
+    ]
     return {
         "tool": "anomaly_detection", "status": "ok",
         "summary": {"evaluated_rows": int(len(arr)), "mean": round(_clean_float(mean), 2), "std": round(_clean_float(std), 2), "anomaly_count": len(anomalies), "threshold_z": threshold},
@@ -312,7 +305,7 @@ def tool_correlation_analysis(datasets: list[pd.DataFrame], params: dict[str, An
                 df[col] = coerced
                 num_cols.append(col)
     if len(num_cols) < 2 or len(df) < 3:
-        return {"tool": "correlation_analysis", "status": "insufficient_columns", "summary": {"message": "At least 2 numeric columns and 3 observations are required for correlation analysis."}}
+        return {"tool": "correlation_analysis", "status": "insufficient_columns", "summary": {"message": "At least 2 numeric columns and 3 observations are required."}}
 
     col_x = params.get("value_column") if params.get("value_column") in num_cols else num_cols[0]
     col_y = params.get("secondary_value_column") if (params.get("secondary_value_column") in num_cols and params.get("secondary_value_column") != col_x) else next(c for c in num_cols if c != col_x)
@@ -336,7 +329,7 @@ def tool_correlation_analysis(datasets: list[pd.DataFrame], params: dict[str, An
 
 
 def tool_distribution_analysis(datasets: list[pd.DataFrame], params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Analyze entity concentration (top-1/top-3 share, Herfindahl-Hirschman Index, quantiles)."""
+    """Analyze entity concentration (top-1/top-3 share, Herfindahl-Hirschman Index)."""
     params = params or {}
     if not datasets or datasets[0].empty:
         return {"tool": "distribution_analysis", "status": "empty", "summary": {}}
@@ -354,8 +347,8 @@ def tool_distribution_analysis(datasets: list[pd.DataFrame], params: dict[str, A
         "summary": {
             "entity_count": int(len(pos)), "total": round(_clean_float(total), 2),
             "top_1_entity": str(pos.iloc[0][lbl_col]),
-            "top_1_share_pct": round(_clean_float(float(shares[0] * 100.0) if len(shares) >= 1 else 0.0), 2),
-            "top_3_share_pct": round(_clean_float(float(shares[:3].sum() * 100.0) if len(shares) >= 1 else 0.0), 2),
+            "top_1_share_pct": round(_clean_float(float(shares[0] * 100.0)), 2),
+            "top_3_share_pct": round(_clean_float(float(shares[:3].sum() * 100.0)), 2),
             "hhi_index": round(_clean_float(hhi), 1),
             "concentration_level": "high" if hhi >= 2500 else ("moderate" if hhi >= 1500 else "diversified"),
         },
@@ -363,7 +356,7 @@ def tool_distribution_analysis(datasets: list[pd.DataFrame], params: dict[str, A
 
 
 def tool_data_quality_check(datasets: list[pd.DataFrame], params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Run deterministic data quality checks on a dataset (nulls, duplicates, non-positive values)."""
+    """Run deterministic data quality checks on a dataset."""
     if not datasets or datasets[0].empty:
         return {"tool": "data_quality_check", "status": "empty", "summary": {"row_count": 0, "null_cells": 0, "duplicate_rows": 0, "quality_ok": False}}
     df = datasets[0]
@@ -380,30 +373,32 @@ def tool_data_quality_check(datasets: list[pd.DataFrame], params: dict[str, Any]
 
 
 def tool_forecast_linear(datasets: list[pd.DataFrame], params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Produce a bounded linear trend forecast when explicitly requested and sample size >= 6."""
+    """Produce a bounded linear trend forecast when sample size >= 6."""
     params = params or {}
     if not datasets or datasets[0].empty:
         return {"tool": "forecast_linear", "status": "empty", "forecasts": [], "summary": {}}
     df = datasets[0].copy()
     val_col = _pick_value_col(df, params.get("value_column"))
     lbl_col = _pick_label_col(df, params.get("time_column") or params.get("label_column"))
-    df["val"] = pd.to_numeric(df[val_col], errors="coerce").dropna()
+    df["val"] = pd.to_numeric(df[val_col], errors="coerce")
+    df = df.dropna(subset=["val"]).reset_index(drop=True)
     n = len(df)
     if n < 6:
         return {
             "tool": "forecast_linear", "status": "insufficient_history", "forecasts": [],
-            "summary": {"periods_available": n, "minimum_required": 6, "warning": "At least 6 historical periods are required for a statistically meaningful forecast."},
+            "summary": {"periods_available": n, "minimum_required": 6, "warning": "At least 6 historical periods are required."},
         }
     horizon = min(6, max(1, int(params.get("horizon") or 3)))
     y, x = df["val"].to_numpy(dtype=float), np.arange(n, dtype=float)
     reg = stats.linregress(x, y)
     resid_std = float(np.std(y - (reg.intercept + reg.slope * x), ddof=2)) if n > 2 else 0.0
+    x_mean, s_xx = float(np.mean(x)), float(np.sum((x - np.mean(x)) ** 2)) or 1.0
     forecasts = [
         {
             "step": step, "label": f"t+{step}",
-            "point_forecast": round(_clean_float(max(0.0, (pt := float(reg.intercept + reg.slope * float(n - 1 + step))))), 2),
-            "lower_95": round(_clean_float(max(0.0, pt - 1.96 * resid_std)), 2),
-            "upper_95": round(_clean_float(max(0.0, pt + 1.96 * resid_std)), 2),
+            "point_forecast": round(_clean_float(max(0.0, pt := float(reg.intercept + reg.slope * (x_star := float(n - 1 + step))))), 2),
+            "lower_95": round(_clean_float(max(0.0, pt - 1.96 * (se := resid_std * math.sqrt(1.0 + (1.0 / n) + ((x_star - x_mean) ** 2) / s_xx)))), 2),
+            "upper_95": round(_clean_float(max(0.0, pt + 1.96 * se)), 2),
         }
         for step in range(1, horizon + 1)
     ]
@@ -434,7 +429,6 @@ ANALYSIS_TOOL_REGISTRY: dict[str, Callable[[list[pd.DataFrame], dict[str, Any] |
 
 
 def run_registered_analysis_tool(tool_name: str, datasets: list[pd.DataFrame], params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Execute an approved analysis function from `ANALYSIS_TOOL_REGISTRY`."""
     if tool_name not in ANALYSIS_TOOL_REGISTRY:
         raise AnalysisToolError(f"Unapproved Python analysis tool: '{tool_name}'.")
     return ANALYSIS_TOOL_REGISTRY[tool_name](datasets, params)

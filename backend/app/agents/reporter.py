@@ -17,6 +17,18 @@ def format_currency(val: float | None) -> str:
     return f"-${abs(val):,.2f}" if val < 0 else f"${val:,.2f}"
 
 
+def format_metric(val: float | None, unit: str = "USD") -> str:
+    if val is None:
+        return "$0.00" if unit == "USD" else "0"
+    if unit == "USD":
+        return format_currency(val)
+    if unit == "%":
+        return f"{val:+.2f}%" if val > 0 else f"{val:,.2f}%"
+    if abs(val - round(val)) < 1e-4:
+        return f"{int(round(val)):,} {unit}".strip()
+    return f"{val:,.2f} {unit}".strip()
+
+
 def format_month_label(m_str: str) -> str:
     try:
         parts = m_str.split("-")
@@ -28,14 +40,15 @@ def format_month_label(m_str: str) -> str:
 
 
 def extract_row_value(row: dict[str, Any]) -> float:
-    for k in ("value", "revenue", "gross_revenue", "gross_revenue_usd", "total_value", "total_revenue", "total", "sales", "amount", "current"):
-        if k in row and row[k] is not None:
+    for k in ("value", "revenue", "gross_revenue", "gross_revenue_usd", "total_value", "total_revenue", "total", "sales", "amount", "current", "total_orders", "order_count", "orders", "units_sold", "aov", "payments_received"):
+        if k in row and row[k] is not None and not isinstance(row[k], bool):
             try:
                 return float(row[k])
             except (ValueError, TypeError):
                 pass
-    for v in row.values():
-        if isinstance(v, (int, float)):
+    skip_ids = {"customernumber", "ordernumber", "employeenumber", "year", "month_idx", "id"}
+    for k, v in row.items():
+        if str(k).lower() not in skip_ids and isinstance(v, (int, float)) and not isinstance(v, bool):
             return float(v)
     return 0.0
 
@@ -44,10 +57,7 @@ def extract_row_label(row: dict[str, Any], default: str = "Unknown") -> str:
     for k in ("month", "product", "productName", "label", "country", "category", "line", "customer", "customerName", "status"):
         if k in row and row[k] is not None:
             return str(row[k])
-    for v in row.values():
-        if isinstance(v, str):
-            return v
-    return default
+    return next((v for v in row.values() if isinstance(v, str)), default)
 
 
 def calculate_pct(prev: float, curr: float) -> float | None:
@@ -58,45 +68,35 @@ def verify_narrative_numbers(text: str, allowed_numbers: set[float]) -> list[str
     if not text or not allowed_numbers:
         return []
     unverified: list[str] = []
-    for match in re.finditer(r"\$?\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b", text):
+    for match in re.finditer(r"\$\d+(?:,\d{3})*(?:\.\d+)?\b|\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b", text):
         raw = match.group(0)
         try:
             val = float(raw.replace("$", "").replace(",", ""))
         except ValueError:
             continue
-        if val in (2003.0, 2004.0, 2005.0):
-            continue
-        if not any(abs(val - ref) <= max(1.5, abs(ref) * 0.005) for ref in allowed_numbers):
+        if val not in (0.0, 2003.0, 2004.0, 2005.0) and not any(abs(val - ref) <= max(1.5, abs(ref) * 0.005) for ref in allowed_numbers):
             unverified.append(raw)
     return unverified
 
 
 def _is_zero_reconciliation_table(title: str, rows: list[dict[str, Any]]) -> bool:
-    """Return True if a table is an internal reconciliation/audit check table with all-zero differences."""
     t_low = (title or "").lower()
     if not rows or not any(w in t_low for w in ("reconciliation", "audit", "check")):
         return False
     diff_cols = [c for c in rows[0].keys() if any(w in c.lower() for w in ("diff", "discrepancy", "residual", "error"))]
-    if not diff_cols:
-        return False
-    for r in rows:
-        for c in diff_cols:
-            v = r.get(c)
-            if isinstance(v, (int, float)) and abs(float(v)) > 1e-4:
-                return False
-    return True
+    return bool(diff_cols) and all(
+        all(not isinstance(r.get(c), (int, float)) or abs(float(r.get(c))) <= 1e-4 for c in diff_cols)
+        for r in rows
+    )
 
 
 def _strip_redundant_date_bounds(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove internal period_start / period_end_exclusive columns when a human-readable period label exists."""
     if not rows:
         return rows
     cols = list(rows[0].keys())
     has_label = any(c.lower() in ("period_label", "period", "month", "label") for c in cols)
     drop_cols = {c for c in cols if has_label and c.lower() in ("period_start", "period_end", "period_end_exclusive", "start_date", "end_date")}
-    if not drop_cols:
-        return rows
-    return [{k: v for k, v in r.items() if k not in drop_cols} for r in rows]
+    return [{k: v for k, v in r.items() if k not in drop_cols} for r in rows] if drop_cols else rows
 
 
 def _table_first_col_signature(rows: list[dict[str, Any]]) -> tuple[str, ...]:
@@ -107,14 +107,13 @@ def _table_first_col_signature(rows: list[dict[str, Any]]) -> tuple[str, ...]:
 
 
 def _clean_python_narrative(calc: dict[str, Any]) -> str:
-    """Return a clean, reader-facing narrative from a Python calculation without raw dict dumps."""
     narr = str(calc.get("narrative") or "").strip()
     if narr and "[{'" not in narr and "={'" not in narr and not re.search(r"\b\w+=\d+\.\d{4,}", narr):
         return narr
     summ = calc.get("summary")
     if not isinstance(summ, dict) or not summ:
         return ""
-    scalar_parts: list[str] = []
+    parts: list[str] = []
     for k, v in summ.items():
         if isinstance(v, (bool, list, dict)) or v is None:
             continue
@@ -133,17 +132,15 @@ def _clean_python_narrative(calc: dict[str, Any]) -> str:
                 val_str = f"{int(round(float(v))):,}"
             else:
                 val_str = f"{float(v):,.2f}"
-            scalar_parts.append(f"{label}: {val_str}")
+            parts.append(f"{label}: {val_str}")
         elif isinstance(v, str) and len(v) < 60:
-            scalar_parts.append(f"{label}: {v}")
-        if len(scalar_parts) >= 5:
+            parts.append(f"{label}: {v}")
+        if len(parts) >= 5:
             break
-    return "; ".join(scalar_parts) + "." if scalar_parts else ""
+    return "; ".join(parts) + "." if parts else ""
 
 
 class ReporterAgent:
-    """Combines deterministic accounting math with OpenAI gpt-6.1-terra insights."""
-
     def __init__(self, model_selector: ModelSelector | None = None):
         self.selector = model_selector or ModelSelector()
 
@@ -176,13 +173,9 @@ class ReporterAgent:
         )
         allowed_numbers: set[float] = set()
 
-        def register_num(v: float | int | None):
-            if v is not None:
-                try:
-                    allowed_numbers.add(round(float(v), 2))
-                    allowed_numbers.add(abs(round(float(v), 2)))
-                except (ValueError, TypeError):
-                    pass
+        def register_num(v: Any):
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                allowed_numbers.update((round(float(v), 2), abs(round(float(v), 2))))
 
         def add_chart(title: str, kind: str, labels: list[str], values: list[float], c_unit: str = unit, x_lbl: str = "", y_lbl: str = "", src_tid: str = ""):
             for v in values:
@@ -196,8 +189,7 @@ class ReporterAgent:
         def add_table(title: str, rows: list[dict[str, Any]]):
             for r in rows[:50]:
                 for v in r.values():
-                    if isinstance(v, (int, float)):
-                        register_num(v)
+                    register_num(v)
             report.tables.append({"title": title, "rows": rows[:50]})
 
         def add_finding(title: str, detail: str, query_ids: list[str], status: str = "verified"):
@@ -207,8 +199,8 @@ class ReporterAgent:
             baseline_ev = by_task.get("baseline")
             if not baseline_ev or not baseline_ev.rows:
                 report.status = "partial"
-                report.summary = f"Unable to establish {metric_label.lower()} baseline for {period_info['target_label']} vs {period_info['previous_label']}. Verify order records exist for both periods."
-                report.limitations = limitations + ["Baseline data could not be computed; causal hypotheses cannot be evaluated."]
+                report.summary = f"Unable to establish {metric_label.lower()} baseline for {period_info['target_label']} vs {period_info['previous_label']}."
+                report.limitations = ["Baseline data could not be computed; causal hypotheses cannot be evaluated."]
                 return report
 
             base_row = baseline_ev.rows[0]
@@ -236,8 +228,8 @@ class ReporterAgent:
             pct_str = f" ({pct_rev:+.1f}%)" if pct_rev is not None else ""
             report.summary = f"{metric_label} {dir_word} by {format_currency(delta_rev)}{pct_str} from {format_currency(prev_rev)} in {period_info['previous_label']} to {format_currency(curr_rev)} in {period_info['target_label']}."
 
-            add_finding("Completed Order Volume", f"Order volume changed from {prev_orders:,} to {curr_orders:,} ({f'{pct_orders:+.1f}%' if pct_orders is not None else '0.0%'}). Volume change is an operational observation contributing to the revenue shift.", [baseline_ev.query_id])
-            add_finding("Average Order Value (AOV)", f"AOV moved from {format_currency(prev_aov)} to {format_currency(curr_aov)} ({f'{pct_aov:+.1f}%' if pct_aov is not None else '0.0%'}). Combined with order count, AOV changes reflect order basket sizing or mix.", [baseline_ev.query_id])
+            add_finding("Completed Order Volume", f"Order volume changed from {prev_orders:,} to {curr_orders:,} ({f'{pct_orders:+.1f}%' if pct_orders is not None else '0.0%'}).", [baseline_ev.query_id])
+            add_finding("Average Order Value (AOV)", f"AOV moved from {format_currency(prev_aov)} to {format_currency(curr_aov)} ({f'{pct_aov:+.1f}%' if pct_aov is not None else '0.0%'}).", [baseline_ev.query_id])
 
             for py_item in python_analyses:
                 if py_item.get("tool") == "revenue_decomposition":
@@ -280,7 +272,7 @@ class ReporterAgent:
                     discrepancy = round(sum_changes - delta_rev, 2)
                     is_reconciled = abs(discrepancy) <= 1.0
                     if not is_reconciled:
-                        limitations.append(f"{dimension_name} breakdown total variance ({format_currency(sum_changes)}) does not fully reconcile with net baseline ({format_currency(delta_rev)}), difference: {format_currency(discrepancy)}.")
+                        limitations.append(f"{dimension_name} breakdown total variance ({format_currency(sum_changes)}) differs from baseline ({format_currency(delta_rev)}) by {format_currency(discrepancy)}.")
                     worst_entity = records[0] if delta_rev <= 0 else records[-1]
                     worst_contrib = (worst_entity["change"] / delta_rev * 100.0) if abs(delta_rev) > 0.01 else 0.0
                     register_num(worst_contrib)
@@ -321,17 +313,14 @@ class ReporterAgent:
                         limitations=" | ".join(p for p in lim_parts if p),
                     ))
 
-            status_ev = by_task.get("order_status")
-            if status_ev and status_ev.rows:
+            if (status_ev := by_task.get("order_status")) and status_ev.rows:
                 add_table("Order Status Breakdown", status_ev.rows)
-                cancelled = [r for r in status_ev.rows if r.get("label") == "Cancelled"]
-                if cancelled:
+                if cancelled := [r for r in status_ev.rows if r.get("label") == "Cancelled"]:
                     val_canc = float(cancelled[0].get("total_value") or 0.0)
                     register_num(val_canc)
-                    add_finding("Cancelled Orders Detected", f"{cancelled[0].get('order_count', 0)} orders totaling {format_currency(val_canc)} were marked as Cancelled during the period. Per reporting rules, cancelled orders are excluded from completed sales metrics.", [status_ev.query_id], "verified")
+                    add_finding("Cancelled Orders Detected", f"{cancelled[0].get('order_count', 0)} orders totaling {format_currency(val_canc)} were marked as Cancelled.", [status_ev.query_id])
 
-            trend_ev = by_task.get("trend")
-            if trend_ev and trend_ev.rows:
+            if (trend_ev := by_task.get("trend")) and trend_ev.rows:
                 add_chart(
                     "Monthly Sales Trend", "line",
                     [next((str(r[k]) for k in ("month", "order_month", "period", "date", "m") if k in r and r[k] is not None), str(list(r.values())[0])) for r in trend_ev.rows],
@@ -369,14 +358,14 @@ class ReporterAgent:
                 top_p, top_v = (labels[0] if labels else "None"), (vals[0] if vals else 0.0)
                 register_num(top_v)
                 if intent.n == 1 and sorted_rows:
-                    report.summary = f"The top product by {metric_label.lower()} in {period_info['target_label']} was '{top_p}', generating {format_currency(top_v)}."
-                    add_finding(f"Top Product: {top_p}", f"Generated {format_currency(top_v)} in {period_info['target_label']}.", [primary_ev.query_id])
+                    report.summary = f"The top product by {metric_label.lower()} in {period_info['target_label']} was '{top_p}', generating {format_metric(top_v, unit)}."
+                    add_finding(f"Top Product: {top_p}", f"Generated {format_metric(top_v, unit)} in {period_info['target_label']}.", [primary_ev.query_id])
                     add_table("Top Product Result", [sorted_rows[0]])
                 else:
                     add_chart(f"Top {len(sorted_rows)} Products by {metric_label}", "bar", labels, vals, c_unit=unit, x_lbl="Product", y_lbl=metric_label, src_tid=primary_ev.task_id)
                     add_table("Top Products Results", sorted_rows)
-                    report.summary = f"Identified top {len(sorted_rows)} products by {metric_label.lower()} in {period_info['target_label']}. '{top_p}' leads with {format_currency(top_v)}."
-                    add_finding(f"Top Product: {top_p}", f"Generated {format_currency(top_v)} in {period_info['target_label']}.", [primary_ev.query_id])
+                    report.summary = f"Identified top {len(sorted_rows)} products by {metric_label.lower()} in {period_info['target_label']}. '{top_p}' leads with {format_metric(top_v, unit)}."
+                    add_finding(f"Top Product: {top_p}", f"Generated {format_metric(top_v, unit)} in {period_info['target_label']}.", [primary_ev.query_id])
 
             elif intent.kind == "trend":
                 if intent.n == 1 and rows:
@@ -384,8 +373,8 @@ class ReporterAgent:
                     top_m, top_v = extract_row_label(sorted_rows[0]), extract_row_value(sorted_rows[0])
                     register_num(top_v)
                     m_label = format_month_label(top_m)
-                    report.summary = f"The month with the highest {metric_label.lower()} was {m_label}, generating {format_currency(top_v)}."
-                    add_finding(f"Peak Month: {m_label}", f"Recorded {metric_label.lower()} of {format_currency(top_v)}.", [primary_ev.query_id])
+                    report.summary = f"The month with the highest {metric_label.lower()} was {m_label}, generating {format_metric(top_v, unit)}."
+                    add_finding(f"Peak Month: {m_label}", f"Recorded {metric_label.lower()} of {format_metric(top_v, unit)}.", [primary_ev.query_id])
                     add_table("Peak Month Result", [sorted_rows[0]])
                 else:
                     labels, vals = [extract_row_label(r) for r in rows], [extract_row_value(r) for r in rows]
@@ -394,7 +383,7 @@ class ReporterAgent:
                     report.summary = f"Historical monthly trend for {metric_label.lower()} across {len(rows)} recorded periods."
                     if vals:
                         max_i = max(range(len(vals)), key=lambda idx: vals[idx])
-                        add_finding(f"Peak Period: {labels[max_i]}", f"Highest {metric_label.lower()} of {format_currency(vals[max_i])} occurred in {labels[max_i]}.", [primary_ev.query_id])
+                        add_finding(f"Peak Period: {labels[max_i]}", f"Highest {metric_label.lower()} of {format_metric(vals[max_i], unit)} occurred in {labels[max_i]}.", [primary_ev.query_id])
 
             elif intent.kind in ("by_country", "by_product_line", "by_customer"):
                 sorted_rows = sorted(rows, key=extract_row_value, reverse=True)
@@ -403,40 +392,29 @@ class ReporterAgent:
                 if intent.n == 1 and sorted_rows:
                     top_entity, top_val = labels[0], vals[0]
                     register_num(top_val)
-                    report.summary = f"The top {dim_title.lower()} by {metric_label.lower()} in {period_info['target_label']} was {top_entity}, generating {format_currency(top_val)}."
-                    add_finding(f"Top {dim_title}: {top_entity}", f"Recorded {metric_label.lower()} of {format_currency(top_val)} in {period_info['target_label']}.", [primary_ev.query_id])
+                    report.summary = f"The top {dim_title.lower()} by {metric_label.lower()} in {period_info['target_label']} was {top_entity}, generating {format_metric(top_val, unit)}."
+                    add_finding(f"Top {dim_title}: {top_entity}", f"Recorded {metric_label.lower()} of {format_metric(top_val, unit)} in {period_info['target_label']}.", [primary_ev.query_id])
                     add_table(f"Top {dim_title} Result", [sorted_rows[0]])
                 else:
                     add_chart(f"{metric_label} by {dim_title}", "bar", labels, vals, c_unit=unit, x_lbl=dim_title, y_lbl=metric_label, src_tid=primary_ev.task_id)
                     add_table(f"{dim_title} Breakdown", sorted_rows)
                     report.summary = f"{metric_label} grouped across {len(sorted_rows)} {dim_title.lower()}s for {period_info['target_label']}."
                     if sorted_rows:
-                        add_finding(f"Leading {dim_title}: {labels[0]}", f"Generated {format_currency(vals[0])} in {period_info['target_label']}.", [primary_ev.query_id])
+                        add_finding(f"Leading {dim_title}: {labels[0]}", f"Generated {format_metric(vals[0], unit)} in {period_info['target_label']}.", [primary_ev.query_id])
             else:
                 r0 = rows[0] if rows else {}
                 val = extract_row_value(r0) if r0 else 0.0
                 register_num(val)
                 short_metric = "Gross Revenue" if metric_label.lower() == "gross merchandise revenue" else metric_label
-                kpis_built: list[dict[str, Any]] = [
-                    {"label": f"{short_metric} ({period_info['target_label']})", "value": round(val, 2), "unit": unit}
-                ]
-                for col_key, kpi_lbl, kpi_unit in (
-                    ("total_orders", "Total Orders", "orders"),
-                    ("orders", "Total Orders", "orders"),
-                    ("aov", "Average Order Value", "USD"),
-                    ("purchasing_customers", "Purchasing Customers", "customers"),
-                ):
+                kpis_built: list[dict[str, Any]] = [{"label": f"{short_metric} ({period_info['target_label']})", "value": round(val, 2), "unit": unit}]
+                for col_key, kpi_lbl, kpi_unit in (("total_orders", "Total Orders", "orders"), ("orders", "Total Orders", "orders"), ("aov", "Average Order Value", "USD"), ("purchasing_customers", "Purchasing Customers", "customers")):
                     if col_key in r0 and isinstance(r0[col_key], (int, float)) and not any(k["label"] == kpi_lbl for k in kpis_built):
                         v_num = float(r0[col_key])
                         register_num(v_num)
-                        kpis_built.append({
-                            "label": kpi_lbl,
-                            "value": int(round(v_num)) if kpi_unit in ("orders", "customers") else round(v_num, 2),
-                            "unit": kpi_unit,
-                        })
+                        kpis_built.append({"label": kpi_lbl, "value": int(round(v_num)) if kpi_unit in ("orders", "customers") else round(v_num, 2), "unit": kpi_unit})
                 report.kpis = kpis_built[:6]
-                report.summary = f"{metric_label} for {period_info['target_label']} is {format_currency(val)}."
-                add_finding(f"Total {metric_label}", f"Measured {format_currency(val)} in {period_info['target_label']}.", [primary_ev.query_id])
+                report.summary = f"{metric_label} for {period_info['target_label']} is {format_metric(val, unit)}."
+                add_finding(f"Total {metric_label}", f"Measured {format_metric(val, unit)} in {period_info['target_label']}.", [primary_ev.query_id])
                 cleaned_rows = _strip_redundant_date_bounds(rows)
                 if len(cleaned_rows) > 1 or len(cleaned_rows[0] if cleaned_rows else {}) > 2:
                     add_table(f"{short_metric} Summary", cleaned_rows)
@@ -466,21 +444,17 @@ class ReporterAgent:
             summ = calc.get("summary") or {}
             if isinstance(summ, dict):
                 for v in summ.values():
-                    if isinstance(v, (int, float)) and not isinstance(v, bool):
-                        register_num(v)
-                    elif isinstance(v, list):
+                    register_num(v)
+                    if isinstance(v, list):
                         for elem in v:
-                            if isinstance(elem, (int, float)) and not isinstance(elem, bool):
-                                register_num(elem)
-                            elif isinstance(elem, dict):
+                            register_num(elem)
+                            if isinstance(elem, dict):
                                 for dv in elem.values():
-                                    if isinstance(dv, (int, float)) and not isinstance(dv, bool):
-                                        register_num(dv)
+                                    register_num(dv)
             for rec in calc.get("records", [])[:50]:
                 if isinstance(rec, dict):
                     for v in rec.values():
-                        if isinstance(v, (int, float)) and not isinstance(v, bool):
-                            register_num(v)
+                        register_num(v)
             for tbl in calc.get("tables", []) or []:
                 if not isinstance(tbl, dict) or not tbl.get("rows"):
                     continue
@@ -489,11 +463,8 @@ class ReporterAgent:
                 for r in t_rows[:50]:
                     if isinstance(r, dict):
                         for v in r.values():
-                            if isinstance(v, (int, float)) and not isinstance(v, bool):
-                                register_num(v)
-                if _is_zero_reconciliation_table(t_title, t_rows):
-                    continue
-                if t_title in existing_table_titles:
+                            register_num(v)
+                if _is_zero_reconciliation_table(t_title, t_rows) or t_title in existing_table_titles:
                     continue
                 new_sig = _table_first_col_signature(t_rows)
                 replaced = False
@@ -521,51 +492,34 @@ class ReporterAgent:
                 clean_title = re.sub(r"^Autonomous Python Analysis:\s*", "", raw_meth, flags=re.IGNORECASE).strip() or "Quantitative Analysis"
                 if len(clean_title) > 72:
                     clean_title = clean_title[:70].rsplit(" ", 1)[0]
-                ver_status = str(py_item.get("verification_status") or "")
-                narr = _clean_python_narrative(calc)
-                if narr:
+                ver_status = "warning" if str(py_item.get("verification_status") or "") == "warning" else "verified"
+                if narr := _clean_python_narrative(calc):
                     if len(report.findings) == 1 and report.findings[0].title.startswith("Total "):
                         report.findings.clear()
-                    add_finding(clean_title, narr, src_qids_default, "warning" if ver_status == "warning" else "verified")
+                    add_finding(clean_title, narr, src_qids_default, ver_status)
                 elif not report.findings:
-                    add_finding(clean_title, f"Completed {clean_title.lower()} across the selected dataset.", src_qids_default, "warning" if ver_status == "warning" else "verified")
+                    add_finding(clean_title, f"Completed {clean_title.lower()} across the selected dataset.", src_qids_default, ver_status)
 
-        is_deep = intent.kind in ("deep", "comparative") or bool(report.hypotheses) or any(p.get("tool") in ("autonomous_research", "custom_python") for p in python_analyses)
-        deterministic_summary = report.summary
-
-        # When output_mode is 'business_report' in live execution, skip the duplicate LLM synthesis call here
-        # because ReportGenerationAgent performs a single unified report synthesis immediately after.
         if output_mode == "business_report" and type(self.selector) is ModelSelector:
             return report
 
-        compact_python_analyses = [
+        is_deep = intent.kind in ("deep", "comparative") or bool(report.hypotheses) or any(p.get("tool") in ("autonomous_research", "custom_python") for p in python_analyses)
+        deterministic_summary = report.summary
+        compact_python = [
             {
-                "task_id": p.get("task_id"),
-                "tool": p.get("tool"),
+                "task_id": p.get("task_id"), "tool": p.get("tool"),
                 "methodology": p.get("methodology") or (p.get("calculation") or {}).get("methodology", ""),
-                "summary": {
-                    str(k): v
-                    for k, v in ((p.get("calculation") or {}).get("summary") or {}).items()
-                    if isinstance(v, (int, float, bool)) or (isinstance(v, str) and len(v) < 160)
-                },
+                "summary": {str(k): v for k, v in ((p.get("calculation") or {}).get("summary") or {}).items() if isinstance(v, (int, float, bool)) or (isinstance(v, str) and len(v) < 160)},
             }
             for p in python_analyses[:4]
         ]
 
         try:
             system_instructions = (
-                "You are a senior business analyst preparing a concise executive summary.\n"
-                "Ground all commentary strictly in the supplied findings and KPIs.\n"
-                "Never invent numerical figures, customers, products, or facts not present in the findings.\n"
-                "Avoid filler, promotional language, or technical pipeline jargon (e.g., sandbox, staged aggregates, line-key excess).\n"
-                "Synthesize a clear, direct executive summary (2-4 sentences), up to 3 actionable recommendations, and 2 follow-up questions.\n"
-                "Keep data_limitations to at most 2 concise analytical caveats without repeating what is already in the summary.\n"
-                "Return strictly in the ReportNarrative schema format."
+                "You are a senior business analyst preparing a concise executive summary (2-4 sentences), up to 3 recommendations, and 2 follow-up questions. "
+                "Ground all figures strictly in the supplied findings and KPIs."
                 if is_deep else
-                "You are a senior data analyst.\n"
-                "Provide a direct, concise summary (1-2 sentences) answering the analytical question based strictly on the supplied findings.\n"
-                "Leave recommended_actions empty and ground all figures strictly in the supplied findings.\n"
-                "Return strictly in the ReportNarrative schema format."
+                "You are a senior data analyst. Provide a direct, concise summary (1-2 sentences) answering the question based strictly on the supplied findings. Leave recommended_actions empty."
             )
             narrative, usage = self.selector.parse_structured(
                 task_type=TaskType.INSIGHT_GENERATION, response_model=ReportNarrative, system_instructions=system_instructions,
@@ -573,7 +527,7 @@ class ReporterAgent:
                     "metric": metric_label, "period": period_info["target_label"], "summary": report.summary,
                     "kpis": report.kpis[:6], "findings": [f.model_dump() for f in report.findings[:6]],
                     "hypotheses": [h.model_dump() for h in report.hypotheses[:4]] if is_deep else [],
-                    "python_analyses": compact_python_analyses, "limitations": report.limitations[:3],
+                    "python_analyses": compact_python, "limitations": report.limitations[:3],
                 },
                 custom_effort="low",
             )
@@ -583,18 +537,13 @@ class ReporterAgent:
                 tokens=usage.input_tokens + usage.output_tokens, cost_usd=usage.cost_usd,
             ))
             if narrative.executive_summary:
-                unverified = verify_narrative_numbers(narrative.executive_summary, allowed_numbers)
-                report.summary = deterministic_summary if unverified else narrative.executive_summary
-            if is_deep and narrative.recommended_actions:
-                report.recommendations = narrative.recommended_actions[:3]
-            elif not is_deep:
-                report.recommendations = []
+                report.summary = deterministic_summary if verify_narrative_numbers(narrative.executive_summary, allowed_numbers) else narrative.executive_summary
+            report.recommendations = narrative.recommended_actions[:3] if (is_deep and narrative.recommended_actions) else ([] if not is_deep else report.recommendations)
             if narrative.follow_up_questions:
                 report.follow_up_questions = narrative.follow_up_questions[:3]
-            if narrative.data_limitations:
-                for lim in narrative.data_limitations[:3]:
-                    if lim not in report.limitations:
-                        report.limitations.append(lim)
+            for lim in (narrative.data_limitations or [])[:3]:
+                if lim not in report.limitations:
+                    report.limitations.append(lim)
         except Exception as exc:
             logger.warning("AI Insight generation fell back to deterministic summary: %s", exc)
 

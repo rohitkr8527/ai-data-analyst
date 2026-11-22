@@ -98,3 +98,54 @@ def test_reporter_reconciles_baseline_variance():
     assert len(report.charts) >= 1
     assert len(report.hypotheses) >= 1
     assert report.hypotheses[0].status == "verified"
+
+
+def test_bugfix_regressions_semantics_tools_and_sandbox(tmp_path):
+    import pandas as pd
+    from app.agents.reporter import verify_narrative_numbers
+    from app.exceptions import QuerySecurityError, SandboxSecurityError
+    from app.services.analysis_tools import run_registered_analysis_tool
+    from app.services.db import ReadOnlyGateway
+    from app.services.sandbox import IsolatedProcessSandboxProvider, SandboxExecutionService
+
+    # 1. Two-period comparison picks the newer target period regardless of order, and semicolons don't truncate intent
+    i1 = extract_intent("Sales were volatile; compare October 2004 vs November 2004 revenue in USA")
+    assert i1.period == "2004-11"
+    assert i1.country == "USA"
+
+    # 2. Prior single-best query (n=1) does not force subsequent top-N query to n=1
+    prev_single = extract_intent("Which month had the highest revenue?")
+    assert prev_single.n == 1
+    next_top = extract_intent("Show top products by revenue", prev_single.model_dump())
+    assert next_top.n == 10
+
+    # 3. forecast_linear handles NaN rows without returning 0.0 / NaN forecasts
+    df_nan = pd.DataFrame([
+        {"month": f"2004-0{i}", "value": (None if i == 3 else 1000.0 * i)}
+        for i in range(1, 9)
+    ])
+    fc = run_registered_analysis_tool("forecast_linear", [df_nan], {"horizon": 2})
+    assert fc["status"] == "ok"
+    assert fc["forecasts"][0]["point_forecast"] > 7000.0
+
+    # 4. verify_narrative_numbers catches unformatted and sub-1000 hallucinated dollar amounts
+    assert "$450.25" in verify_narrative_numbers("Revenue included a $450.25 bonus.", {1000.0})
+
+    # 5. SQL validator allows '#' inside string literals but blocks cross-schema and unapproved functions
+    gw = ReadOnlyGateway(database_url="sqlite:///:memory:")
+    gw.validate_sql("SELECT orderNumber FROM orders WHERE status != 'Cancelled #1'")
+    with pytest.raises(QuerySecurityError):
+        gw.validate_sql("SELECT orderNumber FROM other_schema.orders")
+    with pytest.raises(QuerySecurityError):
+        gw.validate_sql("SELECT EXTRACTVALUE('<a/>', '/a') FROM orders")
+
+    # 6. Sandbox blocks getattr/reflection and prevents disabling audit hook via sys.modules['__main__']
+    sb = SandboxExecutionService(provider=IsolatedProcessSandboxProvider(base_dir=tmp_path / "sb"))
+    ws = sb.create_workspace("reg", "sec")
+    try:
+        with pytest.raises(SandboxSecurityError):
+            sb.execute(ws, "getattr(os, 'system')('echo hi')")
+        with pytest.raises(SandboxSecurityError):
+            sb.execute(ws, "import sys\nsys.modules['__main__']._USER_CODE_ACTIVE = False\nopen('../../.env').read()")
+    finally:
+        sb.destroy_workspace(ws)

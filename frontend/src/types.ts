@@ -4,8 +4,8 @@ export type Chart = {
   labels: string[];
   values: number[];
   unit: string;
-  x_label: string;
-  y_label: string;
+  x_label?: string;
+  y_label?: string;
   source_task_id?: string;
 };
 
@@ -92,16 +92,8 @@ export type PythonAnalysisItem = {
     records?: Record<string, unknown>[];
     tables?: { title: string; rows: Record<string, unknown>[] }[];
     charts?: Chart[];
-    forecasts?: Record<string, unknown>[];
-    anomalies?: Record<string, unknown>[];
   };
   duration_ms: number;
-};
-
-export type BusinessReportSection = {
-  heading: string;
-  body: string;
-  evidence_ids: string[];
 };
 
 export type BusinessReportData = {
@@ -109,7 +101,7 @@ export type BusinessReportData = {
   executive_summary: string;
   business_objective: string;
   kpi_overview: string;
-  sections: BusinessReportSection[];
+  sections: { heading: string; body: string; evidence_ids: string[] }[];
   recommendations: string[];
   limitations: string[];
 };

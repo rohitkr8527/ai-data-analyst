@@ -1,14 +1,11 @@
-"""SQLite-backed conversation memory, session context, and analytical run storage.
-
-Stores durable conversation history and analytical filters for contextual follow-up questions.
-"""
+"""SQLite-backed conversation memory and session storage."""
 from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
-import uuid
 from typing import Any
+import uuid
 from app.config import settings
 
 
@@ -46,7 +43,7 @@ class SessionStore:
     def create_session(self) -> str:
         sid = str(uuid.uuid4())
         with self.connect() as db:
-            db.execute("INSERT INTO sessions VALUES (?, ?, ?)", (sid, datetime.now(timezone.utc).isoformat(), "{}"))
+            db.execute("INSERT INTO sessions VALUES (?, ?, '{}')", (sid, datetime.now(timezone.utc).isoformat()))
         return sid
 
     def get(self, sid: str) -> dict[str, Any] | None:
@@ -54,16 +51,12 @@ class SessionStore:
             session = db.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
             if not session:
                 return None
-            messages = [
-                dict(r) for r in db.execute(
-                    "SELECT role, content, created_at FROM messages WHERE session_id = ? ORDER BY id", (sid,)
-                )
-            ]
+            messages = [dict(r) for r in db.execute("SELECT role, content, created_at FROM messages WHERE session_id = ? ORDER BY id", (sid,))]
             return {
                 "id": sid,
                 "created_at": session["created_at"],
                 "context": json.loads(session["context"]),
-                "messages": messages
+                "messages": messages,
             }
 
     def list_sessions(self) -> list[dict[str, Any]]:
@@ -71,35 +64,33 @@ class SessionStore:
             return [dict(r) for r in db.execute("SELECT id, created_at FROM sessions ORDER BY created_at DESC LIMIT 30")]
 
     def save(self, sid: str, question: str, response: dict[str, Any]) -> None:
-        run_id = response["run_id"]
         now = datetime.now(timezone.utc).isoformat()
         intent = response.get("intent", {})
-
-        # Build context for follow-ups
-        existing_session = self.get(sid) or {}
-        existing_ctx = existing_session.get("context", {})
+        existing_ctx = (self.get(sid) or {}).get("context", {})
+        last_filters = existing_ctx.get("last_filters", {})
 
         new_ctx = {
             "last_intent": intent,
             "last_metric": intent.get("metric"),
             "last_period": intent.get("period") or existing_ctx.get("last_period"),
             "last_filters": {
-                "country": intent.get("country") or existing_ctx.get("last_filters", {}).get("country"),
-                "product_line": intent.get("product_line") or existing_ctx.get("last_filters", {}).get("product_line")
+                "country": intent.get("country") or last_filters.get("country"),
+                "product_line": intent.get("product_line") or last_filters.get("product_line"),
             },
-            "previous_question": question
+            "previous_question": question,
         }
 
         with self.connect() as db:
             db.execute("UPDATE sessions SET context = ? WHERE id = ?", (json.dumps(new_ctx, default=str), sid))
-            summary_text = response.get("report", {}).get("summary", "Analysis completed.")
-            db.executemany("INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)", [
-                (sid, "user", question, now),
-                (sid, "assistant", summary_text, now)
-            ])
-            db.execute("INSERT INTO runs VALUES (?, ?, ?, ?)", (
-                run_id, sid, json.dumps({**response, "question": question}, default=str), now
-            ))
+            summary = response.get("report", {}).get("summary", "Analysis completed.")
+            db.executemany(
+                "INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+                [(sid, "user", question, now), (sid, "assistant", summary, now)],
+            )
+            db.execute(
+                "INSERT OR REPLACE INTO runs VALUES (?, ?, ?, ?)",
+                (response["run_id"], sid, json.dumps({**response, "question": question}, default=str), now),
+            )
 
     def run(self, run_id: str) -> dict[str, Any] | None:
         with self.connect() as db:
@@ -108,7 +99,5 @@ class SessionStore:
 
     def list_runs(self, sid: str) -> list[dict[str, Any]]:
         with self.connect() as db:
-            rows = db.execute(
-                "SELECT response_json FROM runs WHERE session_id = ? ORDER BY created_at, rowid", (sid,)
-            ).fetchall()
+            rows = db.execute("SELECT response_json FROM runs WHERE session_id = ? ORDER BY created_at, rowid", (sid,)).fetchall()
         return [json.loads(r["response_json"]) for r in rows]

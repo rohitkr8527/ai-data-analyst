@@ -1,10 +1,10 @@
 {
   "benchmark_suite": "Multi-Agent AI Data Analyst Quantitative Evaluation Suite v2.0",
-  "generated_at": "2026-11-19T21:29:24.552667+00:00",
+  "generated_at": "2026-11-22T11:02:37.926123+00:00",
   "total_cases": 25,
   "passed_cases": 25,
   "overall_pass_rate_pct": 100.0,
-  "total_duration_ms": 33469.36,
+  "total_duration_ms": 36050.02,
   "headline_metrics": {
     "sql_ast_and_self_repair_accuracy_pct": 100.0,
     "dag_validation_and_bridge_reconciliation_pct": 100.0,
@@ -17,31 +17,31 @@
       "total": 5,
       "passed": 5,
       "pass_rate_pct": 100.0,
-      "mean_latency_ms": 7.86
+      "mean_latency_ms": 7.63
     },
     "DAG & Variance Bridges": {
       "total": 5,
       "passed": 5,
       "pass_rate_pct": 100.0,
-      "mean_latency_ms": 1.18
+      "mean_latency_ms": 1.58
     },
     "Autonomous Python Sandbox": {
       "total": 5,
       "passed": 5,
       "pass_rate_pct": 100.0,
-      "mean_latency_ms": 4275.11
+      "mean_latency_ms": 4605.55
     },
     "3-Layer Verification & Grounding": {
       "total": 5,
       "passed": 5,
       "pass_rate_pct": 100.0,
-      "mean_latency_ms": 1179.05
+      "mean_latency_ms": 1376.67
     },
     "Adversarial & Security Guardrails": {
       "total": 5,
       "passed": 5,
       "pass_rate_pct": 100.0,
-      "mean_latency_ms": 1230.68
+      "mean_latency_ms": 1218.58
     }
   },
   "cases": [
@@ -50,7 +50,7 @@
       "category": "SQL & ReadOnlyGateway",
       "title": "Top-N Product Revenue Aggregation",
       "passed": true,
-      "duration_ms": 5.95,
+      "duration_ms": 7.09,
       "detail": "Top product revenue=$16,500.00 (4 rows)"
     },
     {
@@ -58,7 +58,7 @@
       "category": "SQL & ReadOnlyGateway",
       "title": "Multi-Table Customer Country JOINs",
       "passed": true,
-      "duration_ms": 3.26,
+      "duration_ms": 2.5,
       "detail": "Aggregated 4 countries with JOINs"
     },
     {
@@ -66,7 +66,7 @@
       "category": "SQL & ReadOnlyGateway",
       "title": "CTE Analytical Query Execution",
       "passed": true,
-      "duration_ms": 2.78,
+      "duration_ms": 2.65,
       "detail": "CTE query parsed via SQLGlot and executed cleanly"
     },
     {
@@ -74,7 +74,7 @@
       "category": "SQL & ReadOnlyGateway",
       "title": "Autonomous SQL Error Diagnosis & Self-Repair",
       "passed": true,
-      "duration_ms": 26.1,
+      "duration_ms": 24.8,
       "detail": "Autonomous SQL self-repaired in 1 attempt (2 steps)"
     },
     {
@@ -82,7 +82,7 @@
       "category": "SQL & ReadOnlyGateway",
       "title": "Dynamic Schema & Foreign-Key Catalog Discovery",
       "passed": true,
-      "duration_ms": 1.19,
+      "duration_ms": 1.1,
       "detail": "Dynamic schema catalog inspected 8 tables + sample rows"
     },
     {
@@ -90,7 +90,7 @@
       "category": "DAG & Variance Bridges",
       "title": "Topological DAG & Dependency Edge Validation",
       "passed": true,
-      "duration_ms": 3.13,
+      "duration_ms": 2.67,
       "detail": "Validated 3-task acyclic DAG (1 dependency edges)"
     },
     {
@@ -98,7 +98,7 @@
       "category": "DAG & Variance Bridges",
       "title": "Deterministic DFS Dependency Cycle Rejection",
       "passed": true,
-      "duration_ms": 0.34,
+      "duration_ms": 0.2,
       "detail": "DFS cycle detector deterministically rejected cyclic task graph"
     },
     {
@@ -106,7 +106,7 @@
       "category": "DAG & Variance Bridges",
       "title": "SHA-256 Task Fingerprint Deduplication",
       "passed": true,
-      "duration_ms": 0.2,
+      "duration_ms": 0.15,
       "detail": "SHA-256 task fingerprinting deduplicated identical specs (warnings=1)"
     },
     {
@@ -114,7 +114,7 @@
       "category": "DAG & Variance Bridges",
       "title": "Multi-Dimensional Contribution Bridge Math",
       "passed": true,
-      "duration_ms": 1.9,
+      "duration_ms": 4.47,
       "detail": "Bridge contribution sum_of_changes=$10,550.00"
     },
     {
@@ -122,7 +122,7 @@
       "category": "DAG & Variance Bridges",
       "title": "Zero-Residual Price-Volume Revenue Decomposition",
       "passed": true,
-      "duration_ms": 0.31,
+      "duration_ms": 0.4,
       "detail": "Exact price-volume decomposition residual=$0.0000"
     },
     {
@@ -130,15 +130,15 @@
       "category": "Autonomous Python Sandbox",
       "title": "StandardScaler + KMeans(k=3) & Silhouette Scoring",
       "passed": true,
-      "duration_ms": 3926.73,
-      "detail": "Sandbox KMeans(k=3) silhouette=0.8374 in 3906ms"
+      "duration_ms": 5762.18,
+      "detail": "Sandbox KMeans(k=3) silhouette=0.8374 in 5734ms"
     },
     {
       "case_id": "PY-02",
       "category": "Autonomous Python Sandbox",
       "title": "SciPy OLS Linear Regression & R\u00b2/p-value Audit",
       "passed": true,
-      "duration_ms": 2867.63,
+      "duration_ms": 3194.89,
       "detail": "Sandbox OLS slope=$1855.03/mo, R\u00b2=0.9997"
     },
     {
@@ -146,7 +146,7 @@
       "category": "Autonomous Python Sandbox",
       "title": "Lorenz Gini Coefficient & Pareto Concentration",
       "passed": true,
-      "duration_ms": 3052.15,
+      "duration_ms": 2801.54,
       "detail": "Pareto Top-20% share=70.5%, Gini=0.619"
     },
     {
@@ -154,7 +154,7 @@
       "category": "Autonomous Python Sandbox",
       "title": "Autonomous Traceback Diagnosis & Code Self-Repair",
       "passed": true,
-      "duration_ms": 5878.35,
+      "duration_ms": 5763.59,
       "detail": "Autonomous Python agent self-repaired KeyError in 1 repair step"
     },
     {
@@ -162,7 +162,7 @@
       "category": "Autonomous Python Sandbox",
       "title": "Cross-Step Workspace State & Artifact Persistence",
       "passed": true,
-      "duration_ms": 5650.7,
+      "duration_ms": 5505.53,
       "detail": "Multi-step session state persistence verified across child processes"
     },
     {
@@ -170,7 +170,7 @@
       "category": "3-Layer Verification & Grounding",
       "title": "Independent Sandbox Reproduction on SHA-256 Snapshot",
       "passed": true,
-      "duration_ms": 2929.57,
+      "duration_ms": 3019.62,
       "detail": "SHA-256 snapshot reproduction verified keys=['total_amount', 'rows']"
     },
     {
@@ -178,7 +178,7 @@
       "category": "3-Layer Verification & Grounding",
       "title": "Reproduction Mismatch Detection on Altered Summary",
       "passed": true,
-      "duration_ms": 2949.18,
+      "duration_ms": 3845.1,
       "detail": "Tampered Python summary metric deterministically flagged as mismatch"
     },
     {
@@ -186,7 +186,7 @@
       "category": "3-Layer Verification & Grounding",
       "title": "Executive Narrative Numerical Grounding Pass",
       "passed": true,
-      "duration_ms": 0.18,
+      "duration_ms": 0.07,
       "detail": "All 4 executive currency figures verified against source evidence"
     },
     {
@@ -194,7 +194,7 @@
       "category": "3-Layer Verification & Grounding",
       "title": "Hallucinated Currency Figure Interception",
       "passed": true,
-      "duration_ms": 0.01,
+      "duration_ms": 0.02,
       "detail": "Quality gate caught unverified figure: ['$412,888.99']"
     },
     {
@@ -202,7 +202,7 @@
       "category": "3-Layer Verification & Grounding",
       "title": "End-to-End Evidence Aggregation & Sufficiency Audit",
       "passed": true,
-      "duration_ms": 16.29,
+      "duration_ms": 18.54,
       "detail": "EvidenceReviewer confirmed sufficiency (baseline_delta=$10,550.00)"
     },
     {
@@ -210,7 +210,7 @@
       "category": "Adversarial & Security Guardrails",
       "title": "SQLGlot Mutation, Multi-Statement & Comment Injection Block",
       "passed": true,
-      "duration_ms": 0.82,
+      "duration_ms": 1.37,
       "detail": "Blocked 5/5 SQL mutation, SELECT *, semicolon, and comment attacks"
     },
     {
@@ -218,7 +218,7 @@
       "category": "Adversarial & Security Guardrails",
       "title": "Unauthorized Table & Dangerous SQL Function Block",
       "passed": true,
-      "duration_ms": 0.82,
+      "duration_ms": 1.56,
       "detail": "Blocked 3/3 unauthorized table & dangerous function attacks"
     },
     {
@@ -226,7 +226,7 @@
       "category": "Adversarial & Security Guardrails",
       "title": "Sandbox Static AST Gate (Socket, Subprocess, Dunder Escape)",
       "passed": true,
-      "duration_ms": 6.79,
+      "duration_ms": 9.28,
       "detail": "Static AST gate blocked 4/4 network, subprocess, eval & dunder escapes"
     },
     {
@@ -234,7 +234,7 @@
       "category": "Adversarial & Security Guardrails",
       "title": "Subprocess Environment Secret Scrubbing Verification",
       "passed": true,
-      "duration_ms": 3085.43,
+      "duration_ms": 3068.56,
       "detail": "0 host API keys or DB credentials present in sandbox subprocess environment"
     },
     {
@@ -242,7 +242,7 @@
       "category": "Adversarial & Security Guardrails",
       "title": "Runtime sys.addaudithook Filesystem Escape Interception",
       "passed": true,
-      "duration_ms": 3059.55,
+      "duration_ms": 3012.14,
       "detail": "sys.addaudithook blocked runtime file read outside sandbox workspace (.env)"
     }
   ]

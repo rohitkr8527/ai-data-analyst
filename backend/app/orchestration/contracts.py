@@ -1,17 +1,4 @@
-"""Structured orchestration contracts for the dynamic Supervisor-Worker architecture.
-
-Two families of models live here:
-
-* LLM-facing *drafts* (``PlanDraft``, ``TaskDraft``, ``HypothesisDraft``, ``ReviewDraft``,
-  ``InsightDraftSet``, ``ReportDraft``). They are used as OpenAI Structured Output schemas and
-  therefore avoid free-form ``dict`` fields (strict JSON schema requires closed objects).
-* Internal validated contracts (``AnalysisPlan``, ``AnalysisTask``, ``TaskResult``,
-  ``HypothesisRecord``, ``EvidenceRecord``, ``EvidenceReview``, ``InsightRecord``,
-  ``ChartSpecification``, ``BusinessReport``). Only deterministic code creates these.
-
-Graph state stores these contracts as plain dicts (``model_dump()``) so LangGraph checkpoints
-remain small and serialisable; large datasets are stored in the DatasetStore and referenced.
-"""
+"""Structured orchestration contracts for the Supervisor-Worker architecture."""
 from __future__ import annotations
 from enum import Enum
 from typing import Any, Literal
@@ -42,31 +29,30 @@ class TaskStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
-TERMINAL_STATUSES = {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.SKIPPED.value, TaskStatus.CANCELLED.value}
+TERMINAL_STATUSES = {
+    TaskStatus.COMPLETED.value, TaskStatus.FAILED.value,
+    TaskStatus.SKIPPED.value, TaskStatus.CANCELLED.value,
+}
 
 
-# ---------------------------------------------------------------------------
-# Task specifications
-# ---------------------------------------------------------------------------
 class FilterSpec(BaseModel):
     dimension: FilterDimension
     value: str
 
 
 class QuerySpec(BaseModel):
-    """Structured query specification produced by the Planner and compiled/validated downstream."""
     metric: MetricName
     dimensions: list[DimensionName] = Field(default_factory=list, max_length=2)
     comparison: Literal["none", "previous_period"] = "none"
     period_scope: Literal["plan_period", "full_history", "custom"] = "plan_period"
-    custom_start: str | None = Field(default=None, description="Inclusive ISO date (YYYY-MM-DD) when period_scope=custom")
-    custom_end: str | None = Field(default=None, description="Exclusive ISO date (YYYY-MM-DD) when period_scope=custom")
+    custom_start: str | None = None
+    custom_end: str | None = None
     filters: list[FilterSpec] = Field(default_factory=list, max_length=4)
     inherit_plan_filters: bool = True
     order: Literal["value_desc", "value_asc", "change_asc", "change_desc", "chronological", "none"] = "value_desc"
     limit: int | None = Field(default=None, ge=1, le=100)
     mode: Literal["structured", "custom", "autonomous"] = "structured"
-    custom_request: str | None = Field(default=None, description="Natural-language request when mode=custom or autonomous")
+    custom_request: str | None = None
     custom_tables: list[str] = Field(default_factory=list, max_length=6)
 
 
@@ -90,13 +76,12 @@ class HypothesisSpec(BaseModel):
 
 
 class TaskDraft(BaseModel):
-    """LLM-facing task definition (Planner, Hypothesis Agent, Evidence Reviewer)."""
-    id: str = Field(description="Unique snake_case identifier, e.g. 'baseline' or 'product_line_bridge'")
+    id: str
     title: str
     agent: AgentName
     purpose: str
     depends_on: list[str] = Field(default_factory=list, max_length=6)
-    priority: int = Field(default=3, ge=1, le=5, description="1 = highest priority")
+    priority: int = Field(default=3, ge=1, le=5)
     required: bool = True
     query_spec: QuerySpec | None = None
     python_spec: PythonToolSpec | None = None
@@ -105,7 +90,6 @@ class TaskDraft(BaseModel):
 
 
 class AnalysisTask(TaskDraft):
-    """Validated task contract scheduled by the supervisor."""
     origin: Literal["planner", "hypothesis", "refinement"] = "planner"
     round: int = 0
     fingerprint: str = ""
@@ -117,9 +101,6 @@ class TaskDependency(BaseModel):
     kind: Literal["data", "ordering"] = "data"
 
 
-# ---------------------------------------------------------------------------
-# Plan
-# ---------------------------------------------------------------------------
 class ExpectedEvidence(BaseModel):
     id: str
     description: str
@@ -146,12 +127,11 @@ class BudgetSpec(BaseModel):
 
 
 class PlanDraft(BaseModel):
-    """LLM-facing AnalysisPlan produced by the Planning Agent (gpt-6.1-sol)."""
     objective: str
     complexity: Literal["lookup", "comparison", "investigation"]
     metrics: list[MetricName] = Field(min_length=1, max_length=3)
     dimensions: list[DimensionName] = Field(default_factory=list, max_length=6)
-    period_key: str | None = Field(default=None, description="'YYYY-MM', 'YYYY', or null for the default analysis window")
+    period_key: str | None = None
     filters: list[FilterSpec] = Field(default_factory=list, max_length=4)
     tasks: list[TaskDraft] = Field(min_length=1, max_length=14)
     hypotheses_required: bool = False
@@ -209,9 +189,6 @@ class PlanValidationReport(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
-# Results & evidence
-# ---------------------------------------------------------------------------
 class DatasetRef(BaseModel):
     dataset_id: str
     run_id: str
@@ -224,7 +201,6 @@ class DatasetRef(BaseModel):
 
 
 class HypothesisDraft(BaseModel):
-    """LLM-facing hypothesis from the Hypothesis Agent."""
     id: str
     statement: str
     hypothesis_type: Literal["observed_pattern", "accounting_contribution", "causal_candidate"]
@@ -321,9 +297,6 @@ class EvidenceRecord(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
-# Review & refinement
-# ---------------------------------------------------------------------------
 class RefinementRequest(BaseModel):
     reason: str
     kind: Literal[
@@ -342,7 +315,6 @@ class ReviewIssue(BaseModel):
 
 
 class ReviewDraft(BaseModel):
-    """LLM-facing Evidence Reviewer verdict (gpt-6.1-sol)."""
     sufficient: bool
     confidence: float = Field(ge=0.0, le=1.0)
     assessment: str
@@ -364,58 +336,6 @@ class EvidenceReview(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
-# Insights, charts and reports
-# ---------------------------------------------------------------------------
-class InsightDraft(BaseModel):
-    id: str
-    title: str
-    statement: str
-    kind: Literal["observation", "comparison", "accounting_contribution", "statistical", "causal_hypothesis", "data_quality"]
-    evidence_ids: list[str] = Field(min_length=1, max_length=6)
-    confidence: Literal["high", "medium", "low"] = "medium"
-
-
-class InsightDraftSet(BaseModel):
-    direct_answer: str
-    insights: list[InsightDraft] = Field(default_factory=list, max_length=8)
-    limitations: list[str] = Field(default_factory=list, max_length=6)
-    recommendations: list[str] = Field(default_factory=list, max_length=5)
-    follow_up_questions: list[str] = Field(default_factory=list, max_length=4)
-
-
-class InsightRecord(BaseModel):
-    id: str
-    title: str
-    statement: str
-    kind: str
-    evidence_ids: list[str]
-    confidence: str = "medium"
-    grounded: bool = True
-    ungrounded_numbers: list[str] = Field(default_factory=list)
-    status: Literal["verified", "warning"] = "verified"
-
-
-class ChartSeries(BaseModel):
-    name: str
-    values: list[float]
-
-
-class ChartSpecification(BaseModel):
-    id: str
-    title: str
-    kind: Literal["bar", "line", "waterfall", "pie", "grouped_bar"]
-    labels: list[str]
-    values: list[float]
-    series: list[ChartSeries] = Field(default_factory=list)
-    unit: str = "USD"
-    x_label: str = ""
-    y_label: str = ""
-    source_task_id: str = ""
-    source_dataset_id: str | None = None
-    evidence_id: str = ""
-
-
 class ReportSection(BaseModel):
     heading: str
     body: str
@@ -423,7 +343,6 @@ class ReportSection(BaseModel):
 
 
 class ReportDraft(BaseModel):
-    """LLM-facing Report Generation Agent output (gpt-6.1-terra)."""
     title: str
     executive_summary: str
     business_objective: str
